@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.1.2
-// @description  为小红书官网提供接近 App 的手机布局：双列笔记、下拉刷新、作者主页及原生评论
+// @version      0.2.0
+// @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
 // @match        https://xiaohongshu.com/*
@@ -22,6 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
+  const VERSION = '0.2.0';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -264,8 +265,59 @@ body.red-web[data-red-view="other"] main {
 .red-web-dialog button { border: 1px solid #eee; background: #f7f7f7; color: #222;
   border-radius: 8px; padding: 10px 14px; font-size: 14px; }
 .red-web-dialog button.primary { background: #ff2442; color: white; border-color: #ff2442; }
+
+/* v0.2: mobile-web fallback and on-device diagnostic panel */
+body.red-web[data-red-view="feed"] [data-red-feed-root="true"].red-web-mobile-grid {
+  display: grid !important; grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important;
+  column-gap: 8px !important; row-gap: 10px !important;
+  padding: 0 8px calc(var(--red-web-bottom) + 20px) !important;
+  column-count: auto !important; align-items: start !important;
+}
+body.red-web[data-red-view="feed"] [data-red-feed-root="true"].red-web-mobile-grid > .red-web-card {
+  display: block !important; box-sizing: border-box !important;
+  width: 100% !important; min-width: 0 !important; max-width: 100% !important;
+  margin: 0 !important; height: auto !important; transform: none !important;
+  position: relative !important; break-inside: avoid !important;
+  border-radius: 10px !important; overflow: hidden !important; background: #fff !important;
+}
+body.red-web[data-red-view="feed"] [data-red-feed-root="true"].red-web-mobile-grid > .red-web-card img {
+  max-width: 100% !important; height: auto !important;
+}
+body.red-web[data-red-view="feed"] .red-web-promo-hidden { display: none !important; }
+body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !important; }
+#red-web-debug-toggle {
+  position: fixed !important; right: 10px; bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 2147483600; color: #fff; background: #2229; border: 1px solid #fff9;
+  border-radius: 999px; padding: 8px 9px; min-height: 34px; font: 11px -apple-system,sans-serif;
+  box-shadow: 0 2px 8px #0003; cursor: pointer;
+}
+#red-web-debug-panel {
+  position: fixed !important; z-index: 2147483700 !important;
+  left: 7px; right: 7px; bottom: calc(90px + env(safe-area-inset-bottom));
+  max-height: 65dvh; overflow: hidden; display: flex; flex-direction: column;
+  border: 1px solid #333; border-radius: 15px; background: #141b22;
+  box-shadow: 0 8px 36px #0007; color: #eaf3fb;
+  font: 12px/1.55 -apple-system,BlinkMacSystemFont,sans-serif;
+}
+#red-web-debug-panel header { padding: 12px 14px; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid #ffffff25; }
+#red-web-debug-panel header small { color: #acc0ce; font-size: 11px; }
+#red-web-debug-panel button {
+  color: #fff; background: #3c5063; border: 1px solid #617081;
+  padding: 8px 10px; border-radius: 7px; font: inherit; cursor: pointer;
+}
+#red-web-debug-panel header button { font-size: 22px; line-height: 18px;
+  background: transparent; border: 0; padding: 2px 6px; }
+#red-web-debug-panel .rw-debug-actions { padding: 9px; display: flex; gap: 6px;
+  overflow-x: auto; flex-shrink: 0; }
+#red-web-debug-panel .rw-debug-actions button { white-space: nowrap; }
+#red-web-debug-panel pre { flex: 1 1 auto; min-height: 90px; overflow: auto;
+  padding: 12px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 11px/1.58 ui-monospace,SFMono-Regular,monospace; }
+#red-web-debug-panel p { padding: 7px 12px 10px; margin: 0;
+  font-size: 10px; color: #b9cbd7; border-top: 1px solid #ffffff20; }
 @media (min-width: 821px) {
-  #red-web-top, #red-web-bottom, #red-web-pull { display: none !important; }
+  #red-web-top, #red-web-bottom, #red-web-pull, #red-web-debug-toggle { display: none !important; }
 }
 `;
 
@@ -298,6 +350,140 @@ body.red-web[data-red-view="other"] main {
   let toastTimeout;
   let pullStart = 0;
   let pullDistance = 0;
+  const DEBUG_KEY = 'red-web-debug-v2';
+  let debugLines = [];
+  let debugVisible = false;
+  let lastFeedSignature = '';
+  let previousError = '';
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(DEBUG_KEY) || '[]');
+    if (Array.isArray(cached)) debugLines = cached.slice(-55);
+  } catch (_) { /* private browsing can block storage */ }
+  function clean(value) {
+    return String(value == null ? '' : value)
+      .replace(/https?:\/\/[^\s"'<>]+/g, '[URL]')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[EMAIL]')
+      .replace(/(?:token|cookie|session|password|passwd|authorization|xsec|secret|code)[^\s,;:]*/gi, '[REDACTED]')
+      .replace(/\b[a-zA-Z0-9_=-]{30,}\b/g, '[ID]')
+      .slice(0, 210);
+  }
+  function log(kind, message) {
+    const time = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+    const item = time + ' [' + clean(kind) + '] ' + clean(message);
+    if (item === previousError && kind === 'ERROR') return;
+    previousError = item;
+    debugLines.push(item);
+    if (debugLines.length > 90) debugLines.splice(0, debugLines.length - 90);
+    try { sessionStorage.setItem(DEBUG_KEY, JSON.stringify(debugLines)); } catch (_) {}
+    if (debugVisible) renderDebug();
+  }
+  function safeViewPath() {
+    const path = location.pathname;
+    if (/^\/explore\/[^/]+/.test(path)) return '/explore/[note]';
+    if (/^\/user\/profile\/[^/]+/.test(path)) return '/user/profile/[user]';
+    return path.slice(0, 64);
+  }
+  function loginElements() {
+    return $('button,a,[role="button"],.login-btn,.login-button,.login-entry')
+      .filter(el => !el.closest('#red-web-debug-panel,#red-web-top,#red-web-bottom,#red-web-menu,#red-web-search')
+        && /^(登录|立即登录|注册\/登录|登录\/注册|登录账号|Log in|Sign in)$/.test((el.innerText || el.textContent || '').trim()));
+  }
+  function snapshot() {
+    const cards = selectNoteCards();
+    const heading = popularHeading();
+    const anchors = noteLinks();
+    const root = $('[data-red-feed-root="true"]');
+    const lines = [
+      'Red Web ' + VERSION,
+      '页面: ' + safeViewPath() + ' | 视图: ' + pageView(),
+      '屏幕: ' + window.innerWidth + 'x' + window.innerHeight,
+      '加载: ' + document.readyState + ' | 触屏: ' + ('ontouchstart' in window),
+      '笔记链接: ' + anchors.length + ' | note-item: ' + $('.note-item').length,
+      '识别卡片: ' + cards.length + ' | 热门笔记标题: ' + Boolean(heading),
+      '布局容器: ' + (root ? root.tagName.toLowerCase() + '.' +
+        Array.from(root.classList).slice(0,3).join('.') : '未识别'),
+      '官方登录入口: ' + loginElements().length,
+      '原生详情: ' + Boolean($('.note-detail-mask,#noteContainer')),
+      '日志数量: ' + debugLines.length,
+      '注意：不记录登录凭证、Cookie、正文或 URL 参数'
+    ];
+    return lines.join('\n');
+  }
+  function debugText() {
+    return snapshot() + '\n\n---- LOG ----\n' + debugLines.join('\n');
+  }
+  function debugControl() {
+    if (!$('#red-web-debug-toggle')) {
+      const toggle = document.createElement('button');
+      toggle.id = 'red-web-debug-toggle';
+      toggle.textContent = '调试';
+      toggle.setAttribute('type', 'button');
+      toggle.setAttribute('aria-label', '打开 Red Web 调试面板');
+      toggle.addEventListener('click', () => {
+        debugVisible = !debugVisible;
+        if (debugVisible) log('INFO', '打开调试面板');
+        renderDebug();
+      });
+      document.body.appendChild(toggle);
+    }
+  }
+  function renderDebug() {
+    let panel = $('#red-web-debug-panel');
+    if (!debugVisible) { if (panel) panel.remove(); return; }
+    if (!panel) {
+      panel = document.createElement('aside');
+      panel.id = 'red-web-debug-panel';
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-label', 'Red Web 调试');
+      panel.innerHTML = '<header><b>Red Web 调试 <small>v' + VERSION + '</small></b>' +
+        '<button type="button" data-rw-debug="close" aria-label="关闭调试">×</button></header>' +
+        '<div class="rw-debug-actions">' +
+        '<button type="button" data-rw-debug="scan">重新检测</button>' +
+        '<button type="button" data-rw-debug="copy">复制报告</button>' +
+        '<button type="button" data-rw-debug="login">尝试官网登录</button>' +
+        '<button type="button" data-rw-debug="clear">清空日志</button></div>' +
+        '<pre id="red-web-debug-data"></pre>' +
+        '<p>报告不包含 Cookie、验证码、笔记内容或完整 URL；发送前仍请检查。</p>';
+      panel.addEventListener('click', async event => {
+        const btn = event.target.closest('[data-rw-debug]');
+        if (!btn) return;
+        const action = btn.dataset.rwDebug;
+        if (action === 'close') { debugVisible = false; renderDebug(); }
+        if (action === 'scan') { log('SCAN', '手动重新识别页面'); update(); renderDebug(); }
+        if (action === 'login') officialLogin();
+        if (action === 'clear') { debugLines = []; log('INFO', '日志已清空'); }
+        if (action === 'copy') {
+          const report = debugText();
+          try {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) throw Error('clipboard unavailable');
+            await navigator.clipboard.writeText(report);
+            log('INFO', '已复制诊断报告');
+            notify('已复制调试报告');
+          } catch (_) {
+            const pre = $('#red-web-debug-data');
+            if (pre) {
+              const selection = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(pre);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+            notify('请长按选中的报告文字复制');
+          }
+        }
+      });
+      document.body.appendChild(panel);
+    }
+    const output = $('#red-web-debug-data');
+    if (output) output.textContent = debugText();
+  }
+  window.addEventListener('error', event => {
+    log('ERROR', 'page error: ' + clean(event.message || (event.target && event.target.tagName) || 'unknown'));
+  }, true);
+  window.addEventListener('unhandledrejection', event => {
+    const reason = event.reason;
+    log('ERROR', 'promise: ' + clean(reason && reason.message || typeof reason));
+  });
 
   function notify(message) {
     let el = $('#red-web-toast');

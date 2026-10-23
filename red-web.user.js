@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.1.0
+// @version      0.1.1
 // @description  为小红书官网提供接近 App 的手机布局：双列笔记、下拉刷新、作者主页及原生评论
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -431,17 +431,18 @@ body.red-web[data-red-view="other"] main {
     else location.assign('https://www.xiaohongshu.com/explore');
   }
   function follow() {
-    const native = findNative('关注', ['.channel-container','.side-bar','body']);
+    // Restrict lookup to official navigation: a generic "关注" button may follow a stranger.
+    const native = findNative('关注', [
+      '.channel-container','.channel-scroll-container','.header-container','.side-bar'
+    ]);
     if (native) native.click();
     else notify('当前官网没有可用的关注信息流入口');
   }
   function profile() {
-    const a = nativeLink('/user/profile/');
-    if (a) {
-      a.click();
-      return;
-    }
-    const native = findNative('我', ['.side-bar','.side-bar-container','body']);
+    // Do not choose the first arbitrary /user/profile/ URL: it could be another author's page.
+    const native = findNative('我', [
+      '.side-bar','.side-bar-container','#sidebar','.header-container'
+    ]);
     if (native) native.click();
     else officialLogin();
   }

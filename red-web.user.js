@@ -260,7 +260,7 @@ body.red-web[data-red-view="other"] main {
   padding-bottom: calc(var(--red-web-bottom) + env(safe-area-inset-bottom)) !important;
 }
 #red-web-pull {
-  position: fixed; z-index: 2147482001; pointer-events: none;
+  position: fixed; z-index: 2147482001; pointer-events: none; visibility: hidden;
   left: 50%; top: calc(var(--red-web-top) + env(safe-area-inset-top) + 7px);
   transform: translate(-50%,-60px); transition: transform .15s;
   padding: 8px 13px; border-radius: 22px; font-size: 12px;
@@ -1132,6 +1132,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       document.body.appendChild(el);
     }
     el.textContent = text;
+    el.style.visibility = 'visible';
     el.style.transform = 'translate(-50%,' + Math.min(0, -60 + offset) + 'px)';
   }
   function pullReset() {
@@ -1139,7 +1140,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     pullTarget = null;
     pullDistance = 0;
     const el = $('#red-web-pull');
-    if (el) el.style.transform = 'translate(-50%,-60px)';
+    if (el) {
+      el.style.transform = 'translate(-50%,-60px)';
+      el.style.visibility = 'hidden';
+    }
   }
 
   function start() {

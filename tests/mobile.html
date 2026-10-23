@@ -131,6 +131,7 @@ document.querySelector('#fixture-run').onclick = async () => {
     touch(feed, 'touchstart', 100, 0); const move = touch(feed, 'touchmove', 100, 100); touch(feed, 'touchend', 100, 100);
     check(refreshCount === 2 && move.defaultPrevented, '从屏幕 y=0 下拉也能刷新，并抑制重复的浏览器下拉');
     await waitFor(() => batch === 3 && !refresh().disabled);
+    check(getComputedStyle(document.querySelector('#red-web-pull')).visibility === 'hidden', '下拉结束后收起刷新提示');
     results.textContent += '全部浏览器回归通过';
   } catch (error) { results.textContent += '✗ ' + error.message; }
 };

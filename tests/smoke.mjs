@@ -6,7 +6,7 @@ const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.match(source, /@version\s+0\.2\./);
+  assert.match(source, /@version\s+0\.3\./);
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -66,4 +66,52 @@ test('login button selector excludes unrelated controls', () => {
   const method = source.slice(start, end);
   const factory = new Function('$$', method + '\nreturn loginElements;');
   assert.deepEqual(factory(() => [login, other])(), [login]);
+});
+
+test('H5 home recognizes visual two-column cards without any note links', () => {
+  const start = source.indexOf('  function noteLinks()');
+  const end = source.indexOf('  function findFeedContainer(cards)', start);
+  assert.ok(start > 0 && end > start);
+  const methods = source.slice(start, end);
+  const body = {};
+  const heading = {
+    isConnected: true, textContent: '热门笔记', childElementCount: 0,
+    closest: () => null,
+    getBoundingClientRect: () => ({ top: 160, bottom: 192 })
+  };
+  function makeCard(x, y) {
+    const wrapper = {
+      parentElement: body,
+      getBoundingClientRect: () => ({ width: 191, height: 350, top: y - 8 }),
+      matches: () => true,
+      querySelector: () => image
+    };
+    const image = {
+      parentElement: wrapper,
+      closest: () => null,
+      getBoundingClientRect: () => ({ left: x, top: y, width: 185, height: 270 })
+    };
+    return { image, wrapper };
+  }
+  const left = makeCard(8, 245), right = makeCard(208, 252);
+  const media = [left.image, right.image];
+  const all = selector => {
+    if (selector.startsWith('h1,h2')) return [heading];
+    if (selector.startsWith('img,video')) return media;
+    return [];
+  };
+  const fns = new Function('$', '$$', 'document', 'location', 'window',
+    methods + '\nreturn { noteLinks, selectNoteCards, visualNoteCandidates };'
+  )(() => null, all, { body, documentElement: { clientWidth: 402 } },
+    { href: 'https://www.xiaohongshu.com/' }, { innerWidth: 402 });
+  assert.equal(fns.noteLinks().length, 0);
+  assert.equal(fns.visualNoteCandidates().length, 2);
+  assert.equal(fns.selectNoteCards().length, 2);
+  assert.ok(source.includes('const desktopCards = cards.filter'));
+});
+
+test('login when native entry is absent shows guide rather than a fake URL', () => {
+  assert.match(source, /function showLoginGuide\(\)/);
+  assert.match(source, /showLoginGuide\(\);/);
+  assert.doesNotMatch(source, /xiaohongshu\.com\/login\?redirectPath/);
 });

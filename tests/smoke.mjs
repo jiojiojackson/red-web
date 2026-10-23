@@ -84,6 +84,7 @@ test('H5 home recognizes visual two-column cards without any note links', () => 
       parentElement: body,
       getBoundingClientRect: () => ({ width: 191, height: 350, top: y - 8 }),
       matches: () => true,
+      contains: node => node === wrapper || node === image,
       querySelector: () => image
     };
     const image = {

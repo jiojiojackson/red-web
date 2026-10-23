@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.3.1
+// @version      0.3.2
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -22,7 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.3.1';
+  const VERSION = '0.3.2';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -411,7 +411,15 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     const anchors = noteLinks();
     const root = $('[data-red-feed-root="true"]');
     const visual = visualNoteCandidates();
-    const images = $$('img,video,[style*="background-image"]').length;
+    const allMedia = $$('img,video,[style*="background-image"]');
+    const images = allMedia.length;
+    const width = window.innerWidth || 402;
+    const geometry = allMedia.map(el => {
+      const rect = el.getBoundingClientRect();
+      return { tag: el.tagName.toLowerCase(), width: Math.round(rect.width),
+        height: Math.round(rect.height), y: Math.round(rect.top) };
+    }).filter(m => m.width >= width * .18 && m.height >= 65).slice(0, 8)
+      .map(m => m.tag + ':' + m.width + 'x' + m.height + '@' + m.y).join(' / ');
     const lines = [
       'Red Web ' + VERSION,
       '页面: ' + safeViewPath() + ' | 视图: ' + pageView(),
@@ -421,8 +429,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       '识别卡片: ' + cards.length + ' | 视觉候选: ' + visual.length +
         ' | 媒体元素: ' + images,
       '热门笔记标题: ' + Boolean(heading) + ' | 图片/无链接也可识别',
-      '布局容器: ' + (root ? root.tagName.toLowerCase() + '.' +
-        Array.from(root.classList).slice(0,3).join('.') : '未识别'),
+      '媒体尺寸样本(不含图片URL): ' + (geometry || '无'),
+      '布局: ' + (root ? root.tagName.toLowerCase() + '.' +
+        Array.from(root.classList).slice(0,3).join('.') :
+        (heading && cards.length ? '移动版原生布局（保留）' : '未识别')),
       '官方登录入口: ' + loginElements().length,
       '原生详情: ' + Boolean($('.note-detail-mask,#noteContainer')),
       '日志数量: ' + debugLines.length,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.2.0
+// @version      0.2.1
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -22,7 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -384,7 +384,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     return path.slice(0, 64);
   }
   function loginElements() {
-    return $('button,a,[role="button"],.login-btn,.login-button,.login-entry')
+    return $$('button,a,[role="button"],.login-btn,.login-button,.login-entry')
       .filter(el => !el.closest('#red-web-debug-panel,#red-web-top,#red-web-bottom,#red-web-menu,#red-web-search')
         && /^(登录|立即登录|注册\/登录|登录\/注册|登录账号|Log in|Sign in)$/.test((el.innerText || el.textContent || '').trim()));
   }
@@ -398,7 +398,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
       '页面: ' + safeViewPath() + ' | 视图: ' + pageView(),
       '屏幕: ' + window.innerWidth + 'x' + window.innerHeight,
       '加载: ' + document.readyState + ' | 触屏: ' + ('ontouchstart' in window),
-      '笔记链接: ' + anchors.length + ' | note-item: ' + $('.note-item').length,
+      '笔记链接: ' + anchors.length + ' | note-item: ' + $$('.note-item').length,
       '识别卡片: ' + cards.length + ' | 热门笔记标题: ' + Boolean(heading),
       '布局容器: ' + (root ? root.tagName.toLowerCase() + '.' +
         Array.from(root.classList).slice(0,3).join('.') : '未识别'),
@@ -740,7 +740,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
   // Xiaohongshu uses different HTML for desktop explore and the mobile hot-notes page.
   // Use real native note links first, and never infer/forge signed note URLs.
   function noteLinks() {
-    return $('a[href*="/explore/"],a[href*="/discovery/item/"]')
+    return $$('a[href*="/explore/"],a[href*="/discovery/item/"]')
       .filter(a => {
         if (a.closest('#red-web-top,#red-web-bottom,#red-web-debug-panel,#red-web-menu,#red-web-search')) return false;
         try {
@@ -752,25 +752,26 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
       });
   }
   function popularHeading() {
-    return $('h1,h2,h3,h4,div,span,p')
+    return $$('h1,h2,h3,h4,div,span,p')
       .find(el => el.childElementCount <= 2 &&
         (el.textContent || '').trim() === '热门笔记' &&
         !el.closest('#red-web-top,#red-web-debug-panel'));
   }
   function selectNoteCards() {
-    const native = $('.note-item,[class*="note-card"],[class*="feed-card"]')
+    const links = noteLinks();
+    const native = $$('.note-item,[class*="note-card"],[class*="feed-card"]')
       .filter(el => !el.closest('#red-web-debug-panel,#red-web-top,#red-web-bottom') &&
         $('img,video,[style*="background-image"]', el) &&
-        (noteLinks().some(a => el.contains(a)) || el.matches('.note-item')));
+        (links.some(a => el.contains(a)) || el.matches('.note-item')));
     if (native.length >= 2) return native.filter(el => !native.some(parent =>
       parent !== el && parent.contains(el)));
     const cards = [];
-    for (const link of noteLinks()) {
+    for (const link of links) {
       let cursor = link, found = link;
       for (let depth = 0; cursor && depth < 6; depth++, cursor = cursor.parentElement) {
         if (!cursor || cursor === document.body) break;
         // Stop at grids and sections with multiple different notes.
-        const matching = $('a[href*="/explore/"],a[href*="/discovery/item/"]', cursor);
+        const matching = $$('a[href*="/explore/"],a[href*="/discovery/item/"]', cursor);
         if (matching.length > 2) break;
         if ($('img,video', cursor) && (cursor.textContent || '').trim().length >= 2) {
           found = cursor;
@@ -816,7 +817,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     const cards = selectNoteCards();
     const feed = findFeedContainer(cards);
     if (feed && feed.dataset.redFeedRoot !== 'true') {
-      $('[data-red-feed-root="true"]').forEach(other => {
+      $$('[data-red-feed-root="true"]').forEach(other => {
         if (other !== feed) {
           delete other.dataset.redFeedRoot;
           other.classList.remove('red-web-mobile-grid');

@@ -16,13 +16,19 @@ body { margin: 0; font: 14px/1.6 -apple-system, sans-serif; color: #222; }
 .reload { position: fixed; right: 15px; top: 50%; }
 .h5-feed { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; }
 .h5-card img { width: 100%; } .h5-card { min-width: 0; }
+/* Model the official virtual list: its children and height have independent lifetimes. */
+.feeds-container { position: relative; }
+.feeds-container > .note-item { position: absolute; top: 0; left: 0; width: 183px; }
+.feeds-container .cover { height: 244px; overflow: hidden; }
+.feeds-container .footer { min-height: 64px; }
+#fixture-layout { display: none; }
 </style>
 <div id="app">
   <div class="side-bar"><button class="login-btn">登录</button></div>
   <div class="channel-container"><div id="homefeed_recommend" class="channel active">推荐</div></div>
   <main id="mfContainer" class="feeds-page">
     <h2 id="fixture-status">本地回归测试 · 第 1 批</h2>
-    <div id="fixture-controls"><button id="fixture-run">运行浏览器回归</button><pre id="fixture-results"></pre></div>
+    <div id="fixture-controls"><button id="fixture-run">运行浏览器回归</button><button id="fixture-layout">运行虚拟列表布局回归</button><pre id="fixture-results"></pre></div>
     <div id="exploreFeeds"></div>
   </main>
   <div class="reload"><button class="btn-wrapper" aria-label="官网原生刷新（模拟）">↻</button></div>
@@ -30,6 +36,7 @@ body { margin: 0; font: 14px/1.6 -apple-system, sans-serif; color: #222; }
 <script>
 // Synthetic official markup only: no real account, cookies, API calls or page contents.
 const mode = new URLSearchParams(location.search).get('mode');
+const virtual = mode === 'virtual';
 history.replaceState(null, '', '/');
 const feed = document.querySelector('#exploreFeeds');
 const status = document.querySelector('#fixture-status');
@@ -74,6 +81,23 @@ if (mode === 'hot') {
   feed.className = 'h5-feed';
 } else if (mode === 'logged-in') completeLogin();
 paint();
+function virtualCard(index) {
+  const card = document.createElement('section');
+  card.className = 'note-item';
+  card.style.transform = 'translate(' + (index % 2 * 195) + 'px, ' + (Math.floor(index / 2) * 330) + 'px)';
+  card.innerHTML = '<a class="cover" href="https://www.rednote.com/discovery/item/virtual-' + index + '">' +
+    '<img width="183" height="244" alt="延迟图片占位"></a><div class="footer"><span class="title">虚拟卡片 ' +
+    index + '</span><div class="author-wrapper">模拟作者</div></div>';
+  return card;
+}
+if (virtual) {
+  completeLogin();
+  feed.className = 'feeds-container';
+  feed.style.height = '1980px';
+  feed.replaceChildren(...Array.from({ length: 12 }, (_, i) => virtualCard(i)));
+  document.querySelector('#fixture-run').style.display = 'none';
+  document.querySelector('#fixture-layout').style.display = 'inline-block';
+}
 </script>
 <script src="/red-web.user.js"></script>
 <script>
@@ -89,9 +113,9 @@ function check(ok, text) {
   if (!ok) throw Error(text);
   results.textContent += '✓ ' + text + '\n';
 }
-function touch(target, type, x, y) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
+function touch(target, type, x, y, cancelable = true) {
+  const event = new Event(type, { bubbles: true, cancelable });
+  Object.defineProperty(event, 'touches', { value: ['touchend', 'touchcancel'].includes(type) ? [] : [{ clientX: x, clientY: y }] });
   target.dispatchEvent(event);
   return event;
 }
@@ -116,6 +140,12 @@ document.querySelector('#fixture-run').onclick = async () => {
     refresh().click(); refresh().click();
     await new Promise(resolve => setTimeout(resolve, 80));
     check(refreshCount === 1 && refresh().disabled, '调用原生刷新并阻止重复请求，删除旧卡片不误报成功');
+    touch(feed, 'touchstart', 100, 0);
+    const busyFirst = touch(feed, 'touchmove', 100, 3);
+    const busyMove = touch(feed, 'touchmove', 100, 100);
+    touch(feed, 'touchend', 100, 100);
+    check(busyFirst.defaultPrevented && busyMove.defaultPrevented && refreshCount === 1,
+      '推荐加载期间再次下拉，仍拦截浏览器刷新且不重复请求');
     await waitFor(() => batch === 2 && !refresh().disabled);
     check(document.querySelector('#red-web-toast').textContent === '推荐已更新', '新推荐到达后恢复按钮并提示成功');
     window.scrollTo(0, 0);
@@ -128,12 +158,94 @@ document.querySelector('#fixture-run').onclick = async () => {
     touch(nested, 'touchstart', 100, 0); touch(nested, 'touchmove', 100, 100); touch(nested, 'touchend', 100, 100);
     check(refreshCount === 1, '内层滚动未到顶时不触发刷新');
     nested.remove();
-    touch(feed, 'touchstart', 100, 0); const move = touch(feed, 'touchmove', 100, 100); touch(feed, 'touchend', 100, 100);
-    check(refreshCount === 2 && move.defaultPrevented, '从屏幕 y=0 下拉也能刷新，并抑制重复的浏览器下拉');
+    touch(feed, 'touchstart', 100, 0);
+    const first = touch(feed, 'touchmove', 100, 3);
+    const move = touch(feed, 'touchmove', 100, 100, first.defaultPrevented);
+    touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 2 && first.defaultPrevented && move.defaultPrevented,
+      '首个 3px 移动就接管下拉，避免浏览器和推荐同时刷新');
     await waitFor(() => batch === 3 && !refresh().disabled);
     check(getComputedStyle(document.querySelector('#red-web-pull')).visibility === 'hidden', '下拉结束后收起刷新提示');
+    const bar = document.querySelector('#red-web-top');
+    touch(bar, 'touchstart', 100, 10);
+    const barMove = touch(bar, 'touchmove', 100, 110); touch(bar, 'touchend', 100, 110);
+    check(refreshCount === 3 && barMove.defaultPrevented, '顶部导航栏开始下拉也不会漏给浏览器刷新');
+    await waitFor(() => batch === 4 && !refresh().disabled);
+    touch(feed, 'touchstart', 100, 0);
+    const short = touch(feed, 'touchmove', 100, 30); touch(feed, 'touchend', 100, 30);
+    check(short.defaultPrevented && refreshCount === 3, '短下拉拦截浏览器刷新，但不请求推荐');
+    touch(feed, 'touchstart', 100, 0); touch(feed, 'touchmove', 100, 100);
+    touch(feed, 'touchcancel', 100, 100); touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 3, '系统取消手势后不误刷新');
+    touch(feed, 'touchstart', 100, 0); touch(feed, 'touchmove', 100, 100, false);
+    touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 3, '浏览器已接管的手势不再叠加推荐刷新');
+    const positions = [...feed.children].map(card => card.getBoundingClientRect());
+    const extra = [feed.firstElementChild.cloneNode(true), feed.lastElementChild.cloneNode(true)];
+    feed.append(...extra);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    check(positions.every((box, i) => {
+      const current = feed.children[i].getBoundingClientRect();
+      return current.left === box.left && current.top === box.top;
+    }), '静态列表追加卡片时，不重新平衡左右列');
+    extra.forEach(card => card.remove());
+    document.querySelector('.reload').remove();
+    refresh().click();
+    check(document.querySelector('#red-web-toast').textContent.includes('稍后重试'),
+      '刷新控件缺失时保留当前页面，不跳回手机官网');
     results.textContent += '全部浏览器回归通过';
   } catch (error) { results.textContent += '✗ ' + error.message; }
+};
+
+document.querySelector('#fixture-layout').onclick = async () => {
+  const report = [];
+  const verify = (ok, message) => { if (!ok) throw Error(message); report.push('✓ ' + message); };
+  const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const position = card => {
+    const box = card.getBoundingClientRect(), root = feed.getBoundingClientRect();
+    return [box.left - root.left, box.top - root.top];
+  };
+  try {
+    await frame();
+    verify(feed.dataset.redFeedLayout === 'native', '识别官网虚拟瀑布流');
+    verify(feed.getBoundingClientRect().height === 1980, '保留官网容器占位高度');
+    const card = feed.children[7], before = position(card);
+    verify(before[0] === 195 && before[1] === 990, '保留卡片原生定位与左右列');
+    const cover = card.querySelector('.cover');
+    verify(cover.getBoundingClientRect().height === 244, '图片未加载时仍保留封面高度');
+    window.scrollTo(0, feed.getBoundingClientRect().top + window.scrollY + 650);
+    await frame();
+    const scrollBefore = window.scrollY;
+    const recycled = [...feed.children].slice(0, 4);
+    recycled.forEach(node => node.remove());
+    await frame();
+    verify(position(card).every((n, i) => n === before[i]), '回收屏幕外卡片时，在屏卡片位置不变');
+    verify(window.scrollY === scrollBefore && feed.getBoundingClientRect().height === 1980,
+      '虚拟回收不折叠页面高度、不改变滚动位置');
+    feed.append(virtualCard(12), virtualCard(13)); feed.style.height = '2310px';
+    await frame();
+    verify(position(card).every((n, i) => n === before[i]), '追加新帖子不重排已有卡片');
+    verify(feed.getBoundingClientRect().height === 2310, '官网更新总高度时立即采用新高度');
+    cover.querySelector('img').src = 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="183" height="900"><rect width="183" height="900" fill="#8fa57c"/></svg>');
+    await frame();
+    verify(cover.getBoundingClientRect().height === 244 && position(card).every((n, i) => n === before[i]),
+      '图片延迟加载不撑开封面、不移动卡片');
+    feed.prepend(...recycled);
+    await frame();
+    verify(position(card).every((n, i) => n === before[i]), '重新挂载上方卡片不改变已有定位');
+    const saved = [...feed.children];
+    feed.replaceChildren(card); await frame();
+    verify(feed.dataset.redFeedLayout === 'native', '短暂只剩一张卡片时仍保留原生布局');
+    feed.replaceChildren(); await frame();
+    verify(feed.dataset.redFeedLayout === 'native' && feed.getBoundingClientRect().height === 2310,
+      '刷新空窗期间不切换布局或清除占位高度');
+    feed.replaceChildren(...saved); await frame();
+    verify(position(card).every((n, i) => n === before[i]), '刷新完成后恢复原定位');
+    report.push('全部虚拟列表布局回归通过');
+  } catch (error) { report.push('✗ ' + error.message); }
+  window.scrollTo(0, 0);
+  results.textContent = report.join('\n');
 };
 </script>
 </html>

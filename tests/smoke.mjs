@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf8');
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.0');
+  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.4');
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -113,10 +114,51 @@ test('H5 home recognizes visual two-column cards without any note links', () => 
   assert.ok(source.includes('const desktopCards = cards.filter'));
 });
 
-test('login when native entry is absent shows guide rather than a fake URL', () => {
+test('login without a native entry loads the official desktop page', () => {
   assert.match(source, /function showLoginGuide\(\)/);
-  assert.match(source, /showLoginGuide\(\);/);
+  const method = source.slice(source.indexOf('  function officialLogin()'), source.indexOf('  function showDialog(kind)'));
+  assert.match(method, /loadDesktopLogin\(\);/);
   assert.doesNotMatch(source, /xiaohongshu\.com\/login\?redirectPath/);
+});
+
+test('desktop loader requests only official HTML with a desktop User-Agent', async () => {
+  let captured;
+  const request = new Function('GM', 'GM_xmlhttpRequest', 'DESKTOP_UA',
+    section('requestDesktopPage(url)', 'loadDesktopLogin(') +
+    '\nreturn requestDesktopPage;'
+  )({ xmlHttpRequest(details) {
+    captured = details;
+    return Promise.resolve({ status: 200, responseText: 'official html' });
+  } }, undefined, 'Desktop Safari');
+  const response = await request('https://www.rednote.com/');
+  assert.equal(response.status, 200);
+  assert.equal(captured.url, 'https://www.rednote.com/');
+  assert.equal(captured.method, 'GET');
+  assert.equal(captured.headers['User-Agent'], 'Desktop Safari');
+  assert.equal(captured.headers.Cookie, undefined);
+  assert.equal(captured.data, undefined);
+  assert.equal(captured.timeout, 15000);
+});
+
+test('desktop HTML validation rejects redirects to other sites and mobile HTML', () => {
+  let hasDesktopEntry = true;
+  class Parser { parseFromString() { return { querySelector: () => hasDesktopEntry ? {} : null }; } }
+  const validate = new Function('DOMParser', section('desktopHtml(response, url)', 'requestDesktopPage(url)') +
+    '\nreturn desktopHtml;')(Parser);
+  const response = { status: 200, responseText: '<html>official desktop</html>', responseURL: 'https://www.rednote.com/' };
+  assert.equal(validate(response, response.responseURL), response.responseText);
+  assert.throws(() => validate({ ...response, responseURL: 'https://other.example/' }, response.responseURL), /不同站点/);
+  assert.throws(() => validate({ ...response, status: 403 }, response.responseURL), /403/);
+  hasDesktopEntry = false;
+  assert.throws(() => validate(response, response.responseURL), /未获取到电脑版/);
+});
+
+test('missing extension request API fails with an actionable update message', async () => {
+  const request = new Function('GM', 'GM_xmlhttpRequest', 'DESKTOP_UA',
+    section('requestDesktopPage(url)', 'loadDesktopLogin(') +
+    '\nreturn requestDesktopPage;'
+  )(undefined, undefined, 'Desktop Safari');
+  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.4/);
 });
 
 test('diagnostics expose no media URLs and preserve H5 native grid', () => {
@@ -125,8 +167,59 @@ test('diagnostics expose no media URLs and preserve H5 native grid', () => {
   assert.match(source, /const desktopCards = cards\.filter/);
 });
 
+test('virtual masonry retains native positions and spacer through empty and one-card renders', () => {
+  const feed = { dataset: {}, classList: { remove() {} }, closest: () => null,
+    style: { height: '2600px' } };
+  const stale = { dataset: { redFeedRoot: 'true', redFeedLayout: 'flow' }, classList: { remove() {} } };
+  const makeCard = () => ({ dataset: {}, matches: () => true, classList: { contains: () => true },
+    style: { transform: 'translate(195px, 720px)', width: '183px' } });
+  let cards = Array.from({ length: 12 }, makeCard);
+  const decorate = new Function('$', '$$', 'markMobilePromo', 'selectNoteCards',
+    'findFeedContainer', 'noteLinks', 'popularHeading', 'visualNoteCandidates', 'log',
+    'let lastFeedSignature = "";\n' + section('decorateFeed()', 'update()') + '\nreturn decorateFeed;'
+  )(() => null, selector => selector === '.feeds-container' ? [feed] :
+      selector === '.note-item' ? cards : selector.startsWith('[data-red-feed-root') ? [stale, feed] : [],
+    () => assert.fail('native layout must not use H5 geometry scans'),
+    () => assert.fail('native layout must not infer a container from its current card count'),
+    () => assert.fail('native container stays selected even during an empty render'),
+    () => cards, () => assert.fail('no H5 scan'), () => assert.fail('no H5 scan'), () => {});
+  for (const count of [12, 1, 0, 8]) {
+    cards = Array.from({ length: count }, makeCard);
+    decorate();
+    assert.equal(feed.dataset.redFeedRoot, 'true');
+    assert.equal(feed.dataset.redFeedLayout, 'native');
+    assert.equal(feed.style.height, '2600px');
+    for (const card of cards) assert.deepEqual(card.style, { transform: 'translate(195px, 720px)', width: '183px' });
+  }
+  assert.equal(stale.dataset.redFeedRoot, undefined);
+  assert.equal(stale.dataset.redFeedLayout, undefined);
+});
+
+test('static note lists use a grid while H5 lists keep their own layout', () => {
+  const feed = { dataset: {}, classList: { remove() {} } };
+  let cards = Array.from({ length: 2 }, () => ({ dataset: {}, matches: () => true,
+    classList: { contains: () => true } }));
+  const decorate = new Function('$', '$$', 'markMobilePromo', 'selectNoteCards', 'findFeedContainer',
+    'noteLinks', 'popularHeading', 'visualNoteCandidates', 'log',
+    'let lastFeedSignature = "";\n' + section('decorateFeed()', 'update()') + '\nreturn decorateFeed;'
+  )(() => null, () => [], () => {}, () => cards, () => feed, () => cards,
+    () => null, () => [], () => {});
+  decorate();
+  assert.equal(feed.dataset.redFeedLayout, 'flow');
+  cards = cards.map(card => ({ ...card, matches: () => false }));
+  delete feed.dataset.redFeedRoot; delete feed.dataset.redFeedLayout;
+  decorate();
+  assert.equal(feed.dataset.redFeedRoot, undefined);
+});
+
 function section(from, to) {
-  return source.slice(source.indexOf('  function ' + from), source.indexOf('  function ' + to));
+  const position = name => {
+    const plain = source.indexOf('  function ' + name);
+    return plain >= 0 ? plain : source.indexOf('  async function ' + name);
+  };
+  const start = position(from), end = position(to);
+  assert.ok(start >= 0 && end > start, 'missing function section: ' + from + ' / ' + to);
+  return source.slice(start, end);
 }
 
 test('home navigation preserves the current official domain and route', () => {
@@ -145,7 +238,8 @@ test('home navigation preserves the current official domain and route', () => {
 
 test('English and Chinese login entries exclude script UI and login form submits', () => {
   const make = (text, excluded = false) => ({ textContent: text, closest: () => excluded ? {} : null });
-  const native = [make('登录'), make('Log In'), make('Sign in')];
+  const native = [make('登录'), make('Log In'), make('Sign in'), make('ログイン'),
+    { ...make(''), id: 'login-btn' }];
   const all = [...native, make('关注'), make('登录', true)];
   const select = new Function('$$', section('loginElements()', 'snapshot()') +
     '\nreturn loginElements;')(() => all);
@@ -162,22 +256,128 @@ test('account navigation never selects a card author or a different origin', () 
   assert.equal(get(), me);
 });
 
-test('login uses the hidden native button without dismantling the mobile interface', () => {
-  let clicks = 0, guides = 0, updates = 0;
-  const hiddenButton = { matches: () => true, click: () => { clicks++; } };
-  const login = new Function('$', 'renderDebug', 'nativeProfileEntry', 'loginElements',
-    'loginDialog', 'isVisible', 'log', 'showLoginGuide', 'update',
-    'let debugVisible = false, nativeLoginMode = false;\n' +
-    section('officialLogin()', 'showDialog(kind)') + '\nreturn officialLogin;'
-  )(() => null, () => {}, () => null, () => [hiddenButton], () => null,
-    () => false, () => {}, () => { guides++; }, () => { updates++; });
-  login();
-  assert.equal(clicks, 1);
-  assert.equal(guides, 0);
-  assert.equal(updates, 1);
+function loginHarness({ desktop = false, ready = false } = {}) {
+  const state = { desktop, ready, modal: false, logged: false, clicks: 0, downloads: 0 };
+  const timers = new Map(), messages = [];
+  const control = { disabled: false, setAttribute() {} };
+  const native = { matches: () => true, click() { state.clicks++; state.modal = true; } };
+  const context = {
+    state, $: () => null, $$: () => [control], isVisible: () => false,
+    loginElements: () => state.ready ? [native] : [],
+    loginDialog: () => state.modal, loggedIn: () => state.logged,
+    nativeProfileEntry: () => null, desktopDocument: () => state.desktop,
+    notify: message => messages.push(message), log() {}, update() {}, renderDebug() {},
+    setTimeout: callback => { timers.set(1, callback); return 1; }, clearTimeout: id => timers.delete(id)
+  };
+  const api = runInNewContext(`
+    let desktopLoading = false, pendingDesktopLogin = false, loginOpening = false, loginWaitTimeout;
+    let nativeLoginMode = false, debugVisible = false;
+    function loadDesktopLogin() { state.downloads++; desktopLoading = true; }
+    ${section('nativeLoginEntry()', 'desktopDocument()')}
+    ${section('officialLogin()', 'showDialog(kind)')}
+    ({ officialLogin, syncPendingLogin, waitForNativeLogin,
+      installed() { desktopLoading = false; state.desktop = true; waitForNativeLogin(); } });
+  `, context);
+  return { ...api, state, control, timers, messages };
+}
+
+test('hidden native login button opens once without replacing the document', () => {
+  const h = loginHarness({ desktop: true, ready: true });
+  h.officialLogin(); h.officialLogin();
+  assert.equal(h.state.clicks, 1);
+  assert.equal(h.state.downloads, 0);
+  assert.equal(h.control.disabled, false);
 });
 
-function refreshHarness({ native = true, hot = false, dialog = false, inactiveChannel = false } = {}) {
+test('delayed desktop initialization never triggers another HTML replacement', () => {
+  const h = loginHarness();
+  h.officialLogin(); h.officialLogin();
+  assert.equal(h.state.downloads, 1);
+  h.installed();
+  h.officialLogin(); h.officialLogin();
+  assert.equal(h.state.downloads, 1);
+  assert.equal(h.control.disabled, true);
+  h.state.ready = true;
+  h.syncPendingLogin(); h.syncPendingLogin();
+  assert.equal(h.state.clicks, 1);
+  assert.equal(h.state.downloads, 1);
+  assert.equal(h.control.disabled, false);
+});
+
+test('login preparation timeout allows retry on the current desktop page', () => {
+  const h = loginHarness({ desktop: true });
+  h.officialLogin();
+  h.timers.get(1)();
+  assert.equal(h.control.disabled, false);
+  h.state.ready = true;
+  h.officialLogin();
+  assert.equal(h.state.clicks, 1);
+  assert.equal(h.state.downloads, 0);
+});
+
+test('a logged-in page never downloads HTML or opens another login dialog', () => {
+  const h = loginHarness({ desktop: true });
+  h.state.logged = true;
+  h.officialLogin();
+  assert.equal(h.state.downloads, 0);
+  assert.equal(h.state.clicks, 0);
+  assert.match(h.messages[0], /已登录/);
+});
+
+test('returning from profile uses official SPA navigation without a full reload', () => {
+  let clicks = 0;
+  const home = { href: 'https://www.rednote.com/?channel_id=homefeed_recommend',
+    closest: () => null, click: () => { clicks++; } };
+  const go = new Function('$$', 'location', 'homeUrl', 'pageView', 'refresh',
+    section('goHome()', 'onAction(action)') + '\nreturn goHome;'
+  )(() => [home], { href: 'https://www.rednote.com/user/profile/me', assign() { assert.fail('must not reload'); } },
+    () => 'https://www.rednote.com/', () => 'profile', () => assert.fail('must not refresh before navigation'));
+  go();
+  assert.equal(clicks, 1);
+});
+
+test('runtime starts once per document body and disposes old listeners and timers', () => {
+  const intervals = new Set(), timeouts = new Set(), signals = [], listeners = [];
+  let nextId = 0, boots = 0, disconnects = 0;
+  const document = { body: { classList: { add() {} } }, addEventListener(type, callback, options) {
+    if (type === 'click') signals.push(options.signal);
+    listeners.push({ type, options });
+  } };
+  const context = {
+    document, window: { addEventListener() {} }, AbortController,
+    sessionStorage: { getItem: () => null }, DESKTOP_KEY: 'test', VERSION: 'test',
+    $: () => ({ setAttribute() {} }), addCss() {}, debugControl() {}, safeViewPath: () => '/',
+    log(kind) { if (kind === 'BOOT') boots++; }, update() {}, pullReset() {},
+    onPullStart() {}, onPullMove() {}, onPullEnd() {},
+    MutationObserver: class { observe() {} disconnect() { disconnects++; } },
+    setInterval() { const id = ++nextId; intervals.add(id); return id; },
+    clearInterval: id => intervals.delete(id),
+    setTimeout() { const id = ++nextId; timeouts.add(id); return id; },
+    clearTimeout: id => timeouts.delete(id)
+  };
+  const end = source.lastIndexOf("\n  if (document.readyState === 'loading')");
+  const api = runInNewContext(`
+    let runtimeController, bodyObserver, bootBody, timer, feedCheckTimeout, runtimeGeneration = 0;
+    ${source.slice(source.indexOf('  function stopRuntime()'), end)}
+    ({ start });
+  `, context);
+  api.start(); api.start();
+  assert.equal(boots, 1);
+  assert.equal(signals.length, 1);
+  document.body = { classList: { add() {} } };
+  api.start();
+  assert.equal(boots, 2);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(signals[1].aborted, false);
+  assert.equal(intervals.size, 1);
+  assert.equal(timeouts.size, 1);
+  assert.equal(disconnects, 1);
+  const move = listeners.find(listener => listener.type === 'touchmove');
+  assert.equal(move.options.capture, true);
+  assert.equal(move.options.passive, false);
+});
+
+function refreshHarness({ native = true, hot = false, dialog = false, inactiveChannel = false, view = 'feed' } = {}) {
   let clicks = 0, channelClicks = 0, guides = 0;
   const messages = [], navigations = [], timers = new Map();
   const ui = { disabled: false, setAttribute() {} };
@@ -189,13 +389,14 @@ function refreshHarness({ native = true, hot = false, dialog = false, inactiveCh
   const api = new Function('$', '$$', 'noteLinks', 'location', 'window', 'pageView', 'loginDialog',
     'homeUrl', 'popularHeading', 'showLoginGuide', 'notify', 'log', 'setTimeout', 'clearTimeout',
     'let refreshInProgress = false, nativeLoginMode = false, refreshBefore = "", refreshTimeout;\n' +
+    'const desktopLoading = false, pendingDesktopLogin = false, loginOpening = false;\n' +
     section('feedFingerprint()', 'back()') +
     '\nreturn { refresh, finishRefresh, feedFingerprint };'
   )(() => inactiveChannel ? recommend : null,
     selector => selector.startsWith('.reload') ? (native ? [nativeControl] : []) :
       selector.startsWith('[data-red-action') ? [ui] : [],
     () => hot ? [] : [{ href: location.origin + '/discovery/item/old?xsec_token=do-not-record' }],
-    location, { scrollTo() {} }, () => 'feed', () => dialog,
+    location, { scrollTo() {} }, () => view, () => dialog,
     () => location.origin + '/', () => hot, () => { guides++; },
     text => messages.push(text), () => {}, callback => { timers.set(1, callback); return 1; },
     id => timers.delete(id));
@@ -224,14 +425,20 @@ test('refresh returns to recommended channel before refreshing a category', () =
   assert.equal(h.counts().clicks, 0);
 });
 
-test('static H5 hot notes show help, while missing desktop controls use same-site navigation', () => {
+test('missing refresh controls preserve the current desktop document instead of navigating', () => {
   const hot = refreshHarness({ native: false, hot: true });
   hot.refresh();
   assert.equal(hot.counts().guides, 1);
   assert.equal(hot.navigations.length, 0);
   const desktop = refreshHarness({ native: false });
   desktop.refresh();
-  assert.deepEqual(desktop.navigations, ['https://www.rednote.com/?channel_id=homefeed_recommend']);
+  assert.deepEqual(desktop.navigations, []);
+  assert.match(desktop.messages.at(-1), /稍后重试/);
+  assert.equal(desktop.timers.size, 0);
+  const profile = refreshHarness({ view: 'profile' });
+  profile.refresh();
+  assert.deepEqual(profile.navigations, []);
+  assert.equal(profile.counts().clicks, 0);
 });
 
 test('refresh never interferes with an open official login dialog', () => {
@@ -252,16 +459,114 @@ test('pull-to-refresh respects a nested scroller position', () => {
   assert.equal(getTop({ parentElement: scroller }), 0);
 });
 
+function pullHarness() {
+  let refreshes = 0;
+  const indicator = { style: {} }, messages = [];
+  const state = { top: 0, dialog: false, view: 'feed' };
+  const api = runInNewContext(`
+    let pullStart = null, pullTarget = null, pullDistance = 0, pullX = 0;
+    let pullClaimed = false, pullBlocked = false, refreshInProgress = false, nativeLoginMode = false;
+    ${section('pullReset()', 'stopRuntime()')}
+    ({ start: onPullStart, move: onPullMove, end: onPullEnd, cancel: pullReset,
+       busy(value) { refreshInProgress = value; } });
+  `, {
+    $: () => indicator, loginDialog: () => state.dialog, pageView: () => state.view,
+    scrollTop: () => state.top, refresh: () => refreshes++,
+    pullIndicator: text => messages.push(text), log() {}
+  });
+  function target(kind = 'feed') {
+    const own = { closest: () => kind === 'bar' ? own : null };
+    return { closest(selector) {
+      if (selector === '[id^="red-web-"]') return ['bar', 'debug'].includes(kind) ? own : null;
+      return kind === 'input' ? {} : null;
+    } };
+  }
+  function event(y, { x = 100, cancelable = true, kind = 'feed', fingers = 1 } = {}) {
+    return { target: target(kind), touches: Array.from({ length: fingers }, () => ({ clientX: x, clientY: y })),
+      cancelable, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+  }
+  return { ...api, event, state, indicator, messages, refreshes: () => refreshes };
+}
+
+test('the first tiny downward move is canceled before Safari can commit to page reload', () => {
+  const h = pullHarness();
+  h.start(h.event(0));
+  // Safari may make subsequent moves noncancelable if the first one was allowed.
+  const first = h.event(3);
+  h.move(first);
+  assert.equal(first.defaultPrevented, true);
+  assert.equal(h.messages.length, 0, 'visual threshold must not delay cancellation');
+  const next = h.event(100, { cancelable: first.defaultPrevented });
+  h.move(next); h.end();
+  assert.equal(next.defaultPrevented, true);
+  assert.equal(h.refreshes(), 1);
+  assert.equal(h.indicator.style.visibility, 'hidden');
+});
+
+test('pulling while recommendations load blocks browser reload without a second refresh', () => {
+  const h = pullHarness();
+  h.busy(true); h.start(h.event(100));
+  const first = h.event(104); h.move(first);
+  h.busy(false); // A pending request can finish while the finger is still down.
+  const next = h.event(210); h.move(next); h.end();
+  assert.equal(first.defaultPrevented && next.defaultPrevented, true);
+  assert.equal(h.refreshes(), 0);
+  h.start(h.event(100)); h.move(h.event(200)); h.end();
+  assert.equal(h.refreshes(), 1);
+});
+
+test('pulls from navigation bars are handled, while debug and form controls stay interactive', () => {
+  for (const kind of ['bar', 'debug', 'input']) {
+    const h = pullHarness();
+    h.start(h.event(100, { kind }));
+    const move = h.event(200, { kind }); h.move(move); h.end();
+    assert.equal(move.defaultPrevented, kind === 'bar', kind);
+    assert.equal(h.refreshes(), kind === 'bar' ? 1 : 0, kind);
+  }
+});
+
+test('horizontal and upward gestures cannot later turn into an accidental refresh', () => {
+  for (const first of [{ y: 110, x: 160 }, { y: 90, x: 100 }]) {
+    const h = pullHarness();
+    h.start(h.event(100));
+    const move = h.event(first.y, { x: first.x }); h.move(move);
+    const reversed = h.event(250); h.move(reversed); h.end();
+    assert.equal(move.defaultPrevented || reversed.defaultPrevented, false);
+    assert.equal(h.refreshes(), 0);
+  }
+});
+
+test('browser-owned, short, canceled and multi-touch pulls never request recommendations', () => {
+  for (const kind of ['browser', 'short', 'cancel', 'multi']) {
+    const h = pullHarness();
+    h.start(h.event(0));
+    h.move(h.event(kind === 'short' ? 30 : 100, { cancelable: kind !== 'browser', fingers: kind === 'multi' ? 2 : 1 }));
+    if (kind === 'cancel') h.cancel();
+    h.end();
+    assert.equal(h.refreshes(), 0, kind);
+  }
+});
+
+test('scrolled feeds, login dialogs and other views retain their normal touch behavior', () => {
+  for (const state of [{ top: 100 }, { dialog: true }, { view: 'profile' }]) {
+    const h = pullHarness(); Object.assign(h.state, state);
+    h.start(h.event(100));
+    const move = h.event(220); h.move(move); h.end();
+    assert.equal(move.defaultPrevented, false);
+    assert.equal(h.refreshes(), 0);
+  }
+});
+
 test('mobile bars expose login immediately, then update when account navigation appears', () => {
   for (const authState of ['login', 'profile']) {
     const nodes = {};
     const document = { createElement: () => ({ isConnected: false }), body: { appendChild(node) { nodes[node.id] = node; } } };
-    const draw = new Function('$', 'document', 'authState', 'svg', 'button', 'setRefreshing',
+    const draw = new Function('$', 'document', 'authState', 'svg', 'button', 'setRefreshing', 'setLoginBusy',
       'const refreshInProgress = false;\n' + section('drawBars(view)', 'findNative(label, scopes = [])') +
       '\nreturn drawBars;'
     )(() => null, document, authState, () => '',
       new Function('svg', section('button(action, label, icon, cls =', 'drawBars(view)') + '\nreturn button;')(() => ''),
-      () => {});
+      () => {}, () => {});
     draw('feed');
     const label = authState === 'login' ? '登录' : '我';
     assert.ok(nodes['red-web-top'].innerHTML.includes('>' + label + '</button>'));

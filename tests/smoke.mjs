@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.3');
+  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.4');
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -158,13 +158,58 @@ test('missing extension request API fails with an actionable update message', as
     section('requestDesktopPage(url)', 'loadDesktopLogin(') +
     '\nreturn requestDesktopPage;'
   )(undefined, undefined, 'Desktop Safari');
-  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.3/);
+  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.4/);
 });
 
 test('diagnostics expose no media URLs and preserve H5 native grid', () => {
   assert.match(source, /媒体尺寸样本\(不含图片URL\)/);
   assert.match(source, /移动版原生布局（保留）/);
   assert.match(source, /const desktopCards = cards\.filter/);
+});
+
+test('virtual masonry retains native positions and spacer through empty and one-card renders', () => {
+  const feed = { dataset: {}, classList: { remove() {} }, closest: () => null,
+    style: { height: '2600px' } };
+  const stale = { dataset: { redFeedRoot: 'true', redFeedLayout: 'flow' }, classList: { remove() {} } };
+  const makeCard = () => ({ dataset: {}, matches: () => true, classList: { contains: () => true },
+    style: { transform: 'translate(195px, 720px)', width: '183px' } });
+  let cards = Array.from({ length: 12 }, makeCard);
+  const decorate = new Function('$', '$$', 'markMobilePromo', 'selectNoteCards',
+    'findFeedContainer', 'noteLinks', 'popularHeading', 'visualNoteCandidates', 'log',
+    'let lastFeedSignature = "";\n' + section('decorateFeed()', 'update()') + '\nreturn decorateFeed;'
+  )(() => null, selector => selector === '.feeds-container' ? [feed] :
+      selector === '.note-item' ? cards : selector.startsWith('[data-red-feed-root') ? [stale, feed] : [],
+    () => assert.fail('native layout must not use H5 geometry scans'),
+    () => assert.fail('native layout must not infer a container from its current card count'),
+    () => assert.fail('native container stays selected even during an empty render'),
+    () => cards, () => assert.fail('no H5 scan'), () => assert.fail('no H5 scan'), () => {});
+  for (const count of [12, 1, 0, 8]) {
+    cards = Array.from({ length: count }, makeCard);
+    decorate();
+    assert.equal(feed.dataset.redFeedRoot, 'true');
+    assert.equal(feed.dataset.redFeedLayout, 'native');
+    assert.equal(feed.style.height, '2600px');
+    for (const card of cards) assert.deepEqual(card.style, { transform: 'translate(195px, 720px)', width: '183px' });
+  }
+  assert.equal(stale.dataset.redFeedRoot, undefined);
+  assert.equal(stale.dataset.redFeedLayout, undefined);
+});
+
+test('static note lists use a grid while H5 lists keep their own layout', () => {
+  const feed = { dataset: {}, classList: { remove() {} } };
+  let cards = Array.from({ length: 2 }, () => ({ dataset: {}, matches: () => true,
+    classList: { contains: () => true } }));
+  const decorate = new Function('$', '$$', 'markMobilePromo', 'selectNoteCards', 'findFeedContainer',
+    'noteLinks', 'popularHeading', 'visualNoteCandidates', 'log',
+    'let lastFeedSignature = "";\n' + section('decorateFeed()', 'update()') + '\nreturn decorateFeed;'
+  )(() => null, () => [], () => {}, () => cards, () => feed, () => cards,
+    () => null, () => [], () => {});
+  decorate();
+  assert.equal(feed.dataset.redFeedLayout, 'flow');
+  cards = cards.map(card => ({ ...card, matches: () => false }));
+  delete feed.dataset.redFeedRoot; delete feed.dataset.redFeedLayout;
+  decorate();
+  assert.equal(feed.dataset.redFeedRoot, undefined);
 });
 
 function section(from, to) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.4.3
+// @version      0.4.4
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -30,7 +30,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.4.3';
+  const VERSION = '0.4.4';
   const DESKTOP_KEY = 'red-web-desktop-mode';
   const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15';
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -93,48 +93,58 @@ body.red-web[data-red-view="feed"] .feeds-page {
   height: auto !important; min-height: 100dvh !important;
   overflow: visible !important;
 }
-body.red-web [data-red-feed-root="true"] {
-  display: block !important;
+/* Keep the site's virtual masonry geometry, including its offscreen spacer height.
+   Only static fallback lists use CSS grid; balanced columns move existing cards. */
+body.red-web[data-red-view="feed"] .feeds-page:has(.feeds-container) {
+  padding-left: var(--horizontalGapPx, 12px) !important;
+  padding-right: var(--horizontalGapPx, 12px) !important;
+}
+body.red-web [data-red-feed-layout="native"] {
+  max-width: 100% !important;
+}
+body.red-web [data-red-feed-layout="flow"] {
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important;
+  gap: 10px 8px !important; align-items: start !important;
   width: 100% !important; max-width: 100% !important; min-width: 0 !important;
   height: auto !important; min-height: 0 !important;
   padding: 0 8px 110px !important; margin: 0 auto !important;
-  column-count: 2 !important; column-gap: 8px !important;
   box-sizing: border-box !important; overflow: visible !important;
   position: relative !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item {
-  display: inline-block !important;
+body.red-web [data-red-feed-layout="flow"] .note-item {
+  display: block !important;
   position: relative !important; top: auto !important; left: auto !important;
   right: auto !important; bottom: auto !important;
   transform: none !important; translate: none !important;
   width: 100% !important; max-width: 100% !important;
   min-width: 0 !important; height: auto !important;
-  margin: 0 0 10px !important; padding: 0 !important;
+  margin: 0 !important; padding: 0 !important;
   vertical-align: top !important; break-inside: avoid !important;
   overflow: hidden !important; border-radius: 9px !important;
   background: #fff !important;
   box-shadow: 0 1px 5px rgba(0,0,0,.055) !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .cover,
-body.red-web [data-red-feed-root="true"] .note-item .cover a,
-body.red-web [data-red-feed-root="true"] .note-item .cover img,
-body.red-web [data-red-feed-root="true"] .note-item .cover video {
+body.red-web [data-red-feed-layout="flow"] .note-item .cover,
+body.red-web [data-red-feed-layout="flow"] .note-item .cover a,
+body.red-web [data-red-feed-layout="flow"] .note-item .cover img,
+body.red-web [data-red-feed-layout="flow"] .note-item .cover video {
   max-width: 100% !important; width: 100% !important;
   height: auto !important; object-fit: cover !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .cover {
+body.red-web [data-red-feed-layout="flow"] .note-item .cover {
   display: block !important; position: relative !important;
   overflow: hidden !important; border-radius: 9px 9px 0 0 !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .footer,
-body.red-web [data-red-feed-root="true"] .note-item .info-container {
+body.red-web [data-red-feed-layout="flow"] .note-item .footer,
+body.red-web [data-red-feed-layout="flow"] .note-item .info-container {
   display: block !important; position: relative !important;
   width: 100% !important; min-width: 0 !important;
   padding: 8px 8px 9px !important; margin: 0 !important;
   box-sizing: border-box !important; background: #fff !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .title,
-body.red-web [data-red-feed-root="true"] .note-item .title span {
+body.red-web [data-red-feed-layout="flow"] .note-item .title,
+body.red-web [data-red-feed-layout="flow"] .note-item .title span {
   display: -webkit-box !important; -webkit-box-orient: vertical !important;
   -webkit-line-clamp: 2 !important; line-clamp: 2 !important;
   overflow: hidden !important; white-space: normal !important;
@@ -142,29 +152,29 @@ body.red-web [data-red-feed-root="true"] .note-item .title span {
   line-height: 1.45 !important; color: #222 !important;
   margin: 0 0 8px !important; padding: 0 !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .author-wrapper {
+body.red-web [data-red-feed-layout="flow"] .note-item .author-wrapper {
   display: flex !important; gap: 5px !important;
   min-width: 0 !important; width: 100% !important;
   align-items: center !important; padding: 0 !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .author-wrapper img,
-body.red-web [data-red-feed-root="true"] .note-item .author-avatar {
+body.red-web [data-red-feed-layout="flow"] .note-item .author-wrapper img,
+body.red-web [data-red-feed-layout="flow"] .note-item .author-avatar {
   width: 22px !important; height: 22px !important; border-radius: 50% !important;
   object-fit: cover !important; flex: none !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .author-wrapper .name {
+body.red-web [data-red-feed-layout="flow"] .note-item .author-wrapper .name {
   display: block !important; flex: 1 1 auto !important;
   font-size: 11px !important; color: #666 !important;
   min-width: 0 !important; overflow: hidden !important;
   white-space: nowrap !important; text-overflow: ellipsis !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .like-wrapper {
+body.red-web [data-red-feed-layout="flow"] .note-item .like-wrapper {
   flex: 0 0 auto !important; font-size: 11px !important; color: #777 !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .like-wrapper .count {
+body.red-web [data-red-feed-layout="flow"] .note-item .like-wrapper .count {
   font-size: 11px !important;
 }
-body.red-web [data-red-feed-root="true"] .note-item .author-wrapper a {
+body.red-web [data-red-feed-layout="flow"] .note-item .author-wrapper a {
   min-width: 0 !important;
 }
 #red-web-top, #red-web-bottom, #red-web-pull, #red-web-toast,
@@ -487,7 +497,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       '热门笔记标题: ' + Boolean(heading) + ' | 图片/无链接也可识别',
       '媒体尺寸样本(不含图片URL): ' + (geometry || '无'),
       '布局: ' + (root ? root.tagName.toLowerCase() + '.' +
-        Array.from(root.classList).slice(0,3).join('.') :
+        Array.from(root.classList).slice(0,3).join('.') + ' | ' + (root.dataset.redFeedLayout || '未知') :
         (heading && cards.length ? '移动版原生布局（保留）' : '未识别')),
       '官方登录入口: ' + loginElements().length,
       '电脑版: ' + desktopDocument() + ' | 页面载入中: ' + desktopLoading +
@@ -758,7 +768,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
           const task = GM.xmlHttpRequest(details);
           if (task && typeof task.then === 'function') task.then(resolve, reject);
         } else if (typeof GM_xmlhttpRequest === 'function') GM_xmlhttpRequest(details);
-        else reject(Error('请重新安装 v0.4.3 并加载脚本，以启用官网页面读取接口'));
+        else reject(Error('请重新安装 v0.4.4 并加载脚本，以启用官网页面读取接口'));
       } catch (error) { reject(error); }
     });
   }
@@ -1219,20 +1229,25 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     log('DOM', '已折叠热门笔记上方的大幅媒体横幅');
   }
   function decorateFeed() {
-    markMobilePromo();
-    const cards = selectNoteCards();
-    // The H5 home is already a two-column grid. Reflow ONLY desktop note-item
-    // containers; forcing a second grid onto mobile cards breaks their layout.
+    // The official list removes offscreen cards but retains their absolute positions.
+    // Never turn that virtual window into normal flow or balance it into columns.
+    const nativeFeed = $$('.feeds-container').find(el =>
+      !el.closest('.note-detail-mask,[id^="red-web-"]'));
+    if (!nativeFeed) markMobilePromo();
+    const cards = nativeFeed ? $$('.note-item', nativeFeed) : selectNoteCards();
     const desktopCards = cards.filter(card => card.matches('.note-item'));
-    const feed = desktopCards.length >= 2 ? findFeedContainer(desktopCards) : null;
-    if (feed && feed.dataset.redFeedRoot !== 'true') {
+    const feed = nativeFeed || (desktopCards.length >= 2 ? findFeedContainer(desktopCards) : null);
+    const layout = nativeFeed ? 'native' : 'flow';
+    if (feed && (feed.dataset.redFeedRoot !== 'true' || feed.dataset.redFeedLayout !== layout)) {
       $$('[data-red-feed-root="true"]').forEach(other => {
         if (other !== feed) {
           delete other.dataset.redFeedRoot;
+          delete other.dataset.redFeedLayout;
           other.classList.remove('red-web-mobile-grid');
         }
       });
       feed.dataset.redFeedRoot = 'true';
+      feed.dataset.redFeedLayout = layout;
       feed.classList.remove('red-web-mobile-grid');
     }
     for (const card of cards) {
@@ -1246,11 +1261,11 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       }
     }
     const signature = cards.length + ' card(s), ' + noteLinks().length +
-      ' native link(s), heading=' + Boolean(popularHeading()) +
-      ', mobile-visual=' + visualNoteCandidates().length;
+      ' native link(s), heading=' + (!nativeFeed && Boolean(popularHeading())) +
+      ', mobile-visual=' + (nativeFeed ? 0 : visualNoteCandidates().length);
     if (signature !== lastFeedSignature) {
       lastFeedSignature = signature;
-      log('DOM', signature + ', grid=' + Boolean(feed));
+      log('DOM', signature + ', layout=' + (feed ? layout : 'h5'));
     }
   }
 

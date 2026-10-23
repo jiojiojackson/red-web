@@ -103,7 +103,7 @@ details p {font-size:14px;color:var(--muted);margin:11px 0 1px}
 <main>
 <section class="hero" id="top">
 <div>
-<span class="eyebrow"><span class="dot"></span> 开源 · Safari Userscript · v0.2.3 调试版</span>
+<span class="eyebrow"><span class="dot"></span> 开源 · Safari Userscript · v0.3.1 调试版</span>
 <h1>小红书网页版<br><em>更像 App。</em></h1>
 <p class="lead">在 iPhone Safari 中浏览小红书，用熟悉的双列卡片布局看推荐、打开笔记、查看评论和作者主页。无需搭建服务器，登录仍在官方网站进行。</p>
 <div class="cta"><a class="btn primary" href="#install">开始安装 <span aria-hidden="true">↗</span></a><a class="btn secondary" href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener">打开小红书官网</a></div>
@@ -141,12 +141,12 @@ details p {font-size:14px;color:var(--muted);margin:11px 0 1px}
 <p style="margin-top:12px"><a class="btn primary" href="./red-web.user.js">打开安装脚本 ↗</a></p><p>如安装页未加载：<a href="https://raw.githubusercontent.com/jiojiojackson/red-web/main/red-web.user.js" target="_blank" rel="noopener">备用源地址</a>。</p></div></div>
 <div class="step"><span class="number">4</span><div><h3>访问官方小红书</h3><p>在 Safari 打开 <a href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener">xiaohongshu.com/explore</a>，按官网要求登录。如果移动网页限制功能，可以尝试 Safari「请求桌面网站」。</p></div></div>
 </div>
-<div class="notice"><b>v0.2.3 调试版：</b>已修正此前固定登录链接造成的 404，并增加移动版热门笔记识别及右下角调试窗口。请在 Safari 的 Userscripts 扩展内替换旧脚本，刷新小红书页面；在调试面板中复制报告，便于排查。仍需实际 iPhone 登录测试，官网能力受页面与账号限制。</div>
+<div class="notice"><b>v0.3.1 调试版：</b>已修正此前固定登录链接造成的 404，并增加无链接的移动版图片卡片识别及右下角调试窗口。手机网页找不到官网登录按钮时会给出 Safari 桌面网站登录指引。请在 Safari 的 Userscripts 扩展内替换旧脚本，刷新小红书页面；在调试面板中复制报告，便于排查。仍需实际 iPhone 登录测试，官网能力受页面与账号限制。</div>
 </div></section>
 <div class="container">
 <section class="section faq"><h2 class="section-head">常见问题</h2>
-<details><summary>怎么查看错误和复制报告？</summary><p>安装 v0.2.3 并打开小红书官网后，点右下角半透明「调试」按钮。可以查看原生笔记链接数量、卡片识别情况、官网登录入口数量及页面异常。点击「复制报告」后发送至 GitHub Issues。报告不自动上传；发送前请再次检查是否含敏感信息。</p></details>
-<details><summary>登录为什么仍然打不开？</summary><p>旧版使用了不存在的官网 /login 地址，新版已删除。通过右下角「调试 → 尝试官网登录」来打开官网提供的登录入口；找不到入口时暂时显示原版网页，再通过 Safari「请求桌面网站」尝试。登录完成后可点击「恢复脚本」。如果官网仍拒绝登录，脚本无法绕过站点限制。</p></details>
+<details><summary>怎么查看错误和复制报告？</summary><p>安装 v0.3.1 并打开小红书官网后，点右下角半透明「调试」按钮。可以查看原生笔记链接数量、卡片识别情况、官网登录入口数量及页面异常。点击「复制报告」后发送至 GitHub Issues。报告不自动上传；发送前请再次检查是否含敏感信息。</p></details>
+<details><summary>登录为什么仍然打不开？</summary><p>旧版使用了不存在的官网 /login 地址，新版已删除。通过右下角「调试 → 尝试官网登录」检查官网入口；找不到入口时显示操作说明，请手动在 Safari 中选择「请求桌面网站」，再在官方桌面站点尝试登录。登录完成后可点击「恢复脚本」。如果官网仍拒绝登录，脚本无法绕过站点限制。</p></details>
 <details><summary>打开官网后没有变化？</summary><p>检查 Safari 的 Userscripts 扩展已启用且对小红书允许访问；确认脚本已激活。尝试请求桌面网站并刷新。若当前官网限制移动端页面，脚本无法强制开放被限制的功能。</p></details>
 <details><summary>怎样关闭或恢复官方原版？</summary><p>点击脚本页面左上角菜单 →「切换原版」。如按钮不可用，直接在 Userscripts 扩展中禁用 Red Web。重新开启时，可打开 <a href="https://www.xiaohongshu.com/explore?redweb=reset">恢复脚本链接</a>。</p></details>
 <details><summary>账号密码会上传到 GitHub 或开发者服务器吗？</summary><p>不会。脚本在小红书网站的浏览器页面内运行，不需要私有代理、自己的服务器或额外的账号凭证；本仓库也没有登录收集端点。小红书官网本身会按其政策处理账号数据。</p></details>

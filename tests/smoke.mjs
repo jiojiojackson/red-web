@@ -6,7 +6,7 @@ const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.match(source, /@version\s+0\.3\./);
+  assert.match(source, /@version\s+0\.3\.2/);
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -115,4 +115,10 @@ test('login when native entry is absent shows guide rather than a fake URL', () 
   assert.match(source, /function showLoginGuide\(\)/);
   assert.match(source, /showLoginGuide\(\);/);
   assert.doesNotMatch(source, /xiaohongshu\.com\/login\?redirectPath/);
+});
+
+test('diagnostics expose no media URLs and preserve H5 native grid', () => {
+  assert.match(source, /媒体尺寸样本\(不含图片URL\)/);
+  assert.match(source, /移动版原生布局（保留）/);
+  assert.match(source, /const desktopCards = cards\.filter/);
 });

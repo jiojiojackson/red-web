@@ -1,0 +1,23 @@
+name: Check userscript
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check script and fixture server syntax
+        run: |
+          node --check red-web.user.js
+          node --check tests/serve.mjs
+      - name: Run regression tests
+        run: node --test tests/smoke.mjs

@@ -8,6 +8,7 @@ on:
       - 'red-web.user.js'
       - '.github/workflows/pages.yml'
       - 'README.md'
+      - 'tests/**'
   workflow_dispatch:
 
 permissions:

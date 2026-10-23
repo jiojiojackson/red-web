@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.3.2
+// @version      0.4.0
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
 // @match        https://xiaohongshu.com/*
+// @match        https://www.rednote.com/*
+// @match        https://rednote.com/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
@@ -22,10 +24,11 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.3.2';
+  const VERSION = '0.4.0';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && /Macintosh|MacIntel/i.test(navigator.userAgent))
     || window.matchMedia('(max-width: 820px)').matches;
   const query = new URLSearchParams(location.search);
   if (query.get('redweb') === 'reset') {
@@ -37,6 +40,12 @@
   let disabled = false;
   try { disabled = localStorage.getItem(KEY) === '1'; } catch (_) {}
   if (!mobile || disabled) return;
+
+  // Keep navigation on the current official site; the two domains have separate sessions.
+  function homeUrl() {
+    const path = /^(www\.)?rednote\.com$/.test(location.hostname) ? '/' : '/explore';
+    return new URL(path, location.origin).href;
+  }
 
   const css = `
 :root { --red-web-accent: #ff2442; --red-web-top: 55px; --red-web-bottom: 65px; }
@@ -158,7 +167,7 @@ body.red-web [data-red-feed-root="true"] .note-item .author-wrapper a {
   background: rgba(255,255,255,.97); backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid #f5f5f5;
 }
-#red-web-top .red-web-tabs { display: flex; gap: 28px; height: 100%; align-items: center; }
+#red-web-top .red-web-tabs { display: flex; gap: 20px; height: 100%; align-items: center; }
 #red-web-top button, #red-web-bottom button {
   background: none; color: #252525; border: 0; padding: 0; margin: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -171,6 +180,10 @@ body.red-web [data-red-feed-root="true"] .note-item .author-wrapper a {
   background: var(--red-web-accent); bottom: 8px; left: 50%; transform: translateX(-50%);
 }
 #red-web-top .red-web-icon { width: 38px; height: 44px; }
+#red-web-top .red-web-tools { display: flex; align-items: center; gap: 2px; }
+#red-web-top .red-web-auth { min-width: 44px; min-height: 44px; font-size: 14px;
+  color: var(--red-web-accent); font-weight: 600; }
+#red-web-top button:disabled { opacity: .45; cursor: wait; }
 #red-web-top .red-web-back { gap: 9px; font-size: 16px; font-weight: 600; }
 #red-web-bottom {
   position: fixed !important; z-index: 2147482000 !important;
@@ -194,6 +207,15 @@ body.red-web[data-red-view="detail"] #red-web-bottom,
 body.red-web[data-red-view="login"] #red-web-bottom { display: none !important; }
 body.red-web[data-red-view="detail"] #red-web-top .red-web-tabs,
 body.red-web[data-red-view="login"] #red-web-top { display: none !important; }
+body.red-web[data-red-login-open="true"] #red-web-top,
+body.red-web[data-red-login-open="true"] #red-web-bottom,
+body.red-web[data-red-login-open="true"] #red-web-debug-toggle { display: none !important; }
+/* Keep the official login dialog above our chrome and inside a phone viewport. */
+body.red-web .login-modal { z-index: 2147483500 !important; }
+body.red-web .login-container {
+  max-width: calc(100vw - 24px) !important; max-height: calc(100dvh - 24px) !important;
+  overflow: auto !important; box-sizing: border-box !important;
+}
 body.red-web[data-red-view="detail"] .note-detail-mask {
   position: fixed !important; inset: 0 !important; z-index: 2147481000 !important;
   padding: 0 !important; background: #fff !important;
@@ -365,8 +387,14 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   let lastPath = '';
   let timer;
   let toastTimeout;
-  let pullStart = 0;
+  let pullStart = null;
+  let pullX = 0;
+  let pullTarget = null;
   let pullDistance = 0;
+  let authState = '';
+  let refreshInProgress = false;
+  let refreshBefore = '';
+  let refreshTimeout;
   const DEBUG_KEY = 'red-web-debug-v2';
   let debugLines = [];
   let debugVisible = false;
@@ -397,13 +425,14 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function safeViewPath() {
     const path = location.pathname;
     if (/^\/explore\/[^/]+/.test(path)) return '/explore/[note]';
+    if (/^\/discovery\/item\/[^/]+/.test(path)) return '/discovery/item/[note]';
     if (/^\/user\/profile\/[^/]+/.test(path)) return '/user/profile/[user]';
     return path.slice(0, 64);
   }
   function loginElements() {
     return $$('button,a,[role="button"],.login-btn,.login-button,.login-entry')
-      .filter(el => !el.closest('#red-web-debug-panel,#red-web-top,#red-web-bottom,#red-web-menu,#red-web-search')
-        && /^(登录|立即登录|注册\/登录|登录\/注册|登录账号|Log in|Sign in)$/.test((el.innerText || el.textContent || '').trim()));
+      .filter(el => !el.closest('[id^="red-web-"],.login-modal,.login-container')
+        && /^(登录|立即登录|注册\s*\/\s*登录|登录\s*\/\s*注册|登录账号|Log in|Sign in)$/i.test((el.innerText || el.textContent || '').trim()));
   }
   function snapshot() {
     const cards = selectNoteCards();
@@ -539,7 +568,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function pageView() {
     const path = location.pathname;
     if (/^\/(login|website-login)(\/|$)/.test(path)) return 'login';
-    if (/^\/explore\/[^/]+/.test(path)) return 'detail';
+    if (/^\/(?:explore|discovery\/item)\/[^/]+/.test(path)) return 'detail';
     if (isVisible($('.note-detail-mask #noteContainer')) ||
       isVisible($('.note-detail-mask .note-container'))) return 'detail';
     if (/^\/user\/profile\//.test(path)) return 'profile';
@@ -568,24 +597,30 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         '<div class="red-web-tabs">' +
         '<button class="red-web-tab" data-red-action="following">关注</button>' +
         '<button class="red-web-tab active" data-red-action="home">' + title + '</button></div>' +
+        '<div class="red-web-tools">' +
+        '<button type="button" class="red-web-auth" data-red-action="' +
+          (authState === 'profile' ? 'profile' : 'login') + '">' +
+          (authState === 'profile' ? '我' : '登录') + '</button>' +
         button(view === 'feed' ? 'refresh' : 'search', view === 'feed' ? '刷新推荐' : '搜索',
-          view === 'feed' ? 'refresh' : 'search', 'red-web-icon');
+          view === 'feed' ? 'refresh' : 'search', 'red-web-icon') + '</div>';
     }
     bottom.innerHTML =
       button('home', '首页', 'home', 'red-web-nav' + (view === 'feed' ? ' active' : '')) +
       button('search', '搜索', 'search', 'red-web-nav' + (view === 'search' ? ' active' : '')) +
       '<button type="button" class="red-web-plus" data-red-action="publish" aria-label="发布">+</button>' +
       button('messages', '消息', 'chat', 'red-web-nav') +
-      button('profile', '我', 'user', 'red-web-nav' + (view === 'profile' ? ' active' : ''));
+      button(authState === 'profile' ? 'profile' : 'login', authState === 'profile' ? '我' : '登录',
+        'user', 'red-web-nav' + (view === 'profile' ? ' active' : ''));
     if (!top.isConnected) document.body.appendChild(top);
     if (!bottom.isConnected) document.body.appendChild(bottom);
+    setRefreshing(refreshInProgress);
   }
 
   function findNative(label, scopes = []) {
     const targets = scopes.length ? scopes.flatMap(s => $$(s)) : [document.body];
     for (const root of targets) {
-      const els = $$('a,button,[role="button"],.channel,.side-bar-item', root);
-      const match = els.find(el => !el.closest('#red-web-top,#red-web-bottom,#red-web-menu') &&
+      const els = $$('a,button,[role="button"],.channel,.side-bar-item,.bottom-channel', root);
+      const match = els.find(el => !el.closest('[id^="red-web-"]') &&
         el.textContent.trim() === label);
       if (match) return match;
     }
@@ -594,6 +629,20 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function nativeLink(fragment) {
     return $$('a[href]').find(a => a.href.includes(fragment) &&
       !a.closest('.note-item,.note-detail-mask,#red-web-top,#red-web-bottom'));
+  }
+  function nativeProfileEntry() {
+    // Only account navigation can identify "Me"; card authors are not the current user.
+    return $$('.side-bar a[href],.side-bar-container a[href],#sidebar a[href],.sidebar a[href],.header-container a[href]')
+      .find(a => {
+        try {
+          const url = new URL(a.href, location.href);
+          return url.origin === location.origin && /^\/user\/profile\/[^/]+/.test(url.pathname)
+            && !a.closest('.note-item,.red-web-card');
+        } catch (_) { return false; }
+      });
+  }
+  function loginDialog() {
+    return $$('.login-modal,.login-container').find(isVisible);
   }
   let nativeLoginMode = false;
   function restoreRedWeb() {
@@ -617,10 +666,12 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       '<h3>当前手机页面没有登录入口</h3>' +
       '<p>Red Web 已检查该页面，未找到小红书官方登录按钮。无法由脚本自行创建账号登录或绕过官网限制。</p>' +
       '<p><b>建议：</b>在 Safari 地址栏菜单选择「请求桌面网站」，然后访问官方「发现」页面。如果出现官网登录按钮，请使用官方短信验证或扫码。</p>' +
+      '<p>「热门笔记」手机落地页可能只提供固定内容，没有账号推荐流。也可使用 rednote 官方站；两个域名和不同设备的登录状态需要分别确认。</p>' +
       '<p>请注意：切换网站显示方式需要您在 Safari 中手动操作，脚本不能直接修改 Safari 的用户代理设置。</p>' +
       '<div class="red-web-login-buttons">' +
       '<button type="button" data-rw-login="close">返回</button>' +
       '<button type="button" data-rw-login="original">查看官网原版</button>' +
+      '<button type="button" data-rw-login="rednote">打开 rednote 官网</button>' +
       '<button type="button" class="red-web-login-primary" data-rw-login="explore">打开官方发现页</button>' +
       '</div></div>';
     overlay.addEventListener('click', event => {
@@ -630,7 +681,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       const action = button.dataset.rwLogin;
       overlay.remove();
       if (action === 'original') switchToOriginal();
-      if (action === 'explore') location.assign('https://www.xiaohongshu.com/explore');
+      if (action === 'explore') location.assign(homeUrl());
+      if (action === 'rednote') location.assign('https://www.rednote.com/');
     });
     document.body.appendChild(overlay);
   }
@@ -649,18 +701,27 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   }
 
   function officialLogin() {
+    $('#red-web-menu')?.remove();
+    $('#red-web-login-guide')?.remove();
+    debugVisible = false;
+    renderDebug();
+    if (nativeLoginMode) restoreRedWeb();
+    if (loginDialog()) { update(); return; }
+    const account = nativeProfileEntry();
+    if (account) { account.click(); return; }
     const candidates = loginElements();
-    const entry = candidates.find(isVisible) || candidates[0];
+    const actionable = candidates.filter(el => el.matches('button,a,[role="button"]'));
+    const entry = actionable.find(isVisible) || actionable[0] || candidates.find(isVisible) || candidates[0];
     log('AUTH', '官网登录检测：原生入口数=' + candidates.length);
     if (!entry) {
       log('AUTH', '手机端官网未提供登录按钮，显示官网桌面模式操作指引');
       showLoginGuide();
       return;
     }
-    switchToOriginal();
     try {
       entry.click();
       log('AUTH', '已尝试点击小红书原生登录按钮');
+      update();
     } catch (error) {
       log('ERROR', '原生登录入口不可用: ' + (error && error.message));
       showLoginGuide();
@@ -693,28 +754,76 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       $('#red-web-search-form').addEventListener('submit', event => {
         event.preventDefault();
         const keyword = new FormData(event.currentTarget).get('keyword').trim();
-        if (keyword) location.assign('https://www.xiaohongshu.com/search_result?keyword=' +
+        if (keyword) location.assign(location.origin + '/search_result?keyword=' +
           encodeURIComponent(keyword) + '&source=web_explore_feed');
       });
       $('#red-web-search input').focus();
     }
   }
 
+  function feedFingerprint() {
+    return Array.from(new Set(noteLinks().map(a => new URL(a.href, location.href).pathname)))
+      .sort().join('|');
+  }
+  function setRefreshing(active) {
+    $$('[data-red-action="refresh"]').forEach(el => {
+      el.disabled = active;
+      el.setAttribute('aria-busy', String(active));
+    });
+  }
+  function finishRefresh(message) {
+    refreshInProgress = false;
+    clearTimeout(refreshTimeout);
+    setRefreshing(false);
+    if (message) notify(message);
+  }
+  function nativeRefreshControl() {
+    // The official floating refresh control triggers a new feed request, unlike reload().
+    return [...$$('.reload .btn-wrapper'), ...$$('.reload')].find(el =>
+      !el.closest('[id^="red-web-"],.note-item,.red-web-card,.note-detail-mask'));
+  }
   function refresh() {
+    if (refreshInProgress || nativeLoginMode || loginDialog()) return;
     if (pageView() !== 'feed') {
-      location.assign('https://www.xiaohongshu.com/explore');
+      location.assign(homeUrl());
       return;
     }
+    const recommend = $('#homefeed_recommend');
+    const control = recommend && !recommend.classList.contains('active')
+      ? recommend : nativeRefreshControl();
+    if (!control) {
+      if (popularHeading() && !noteLinks().length) {
+        notify('当前是热门笔记展示页，请切换官网桌面网站使用推荐刷新');
+        showLoginGuide();
+      } else {
+        notify('未找到官网刷新控件，正在打开官方推荐页');
+        const url = new URL(homeUrl());
+        url.searchParams.set('channel_id', 'homefeed_recommend');
+        location.assign(url.href);
+      }
+      return;
+    }
+    refreshBefore = feedFingerprint();
+    refreshInProgress = true;
+    setRefreshing(true);
     notify('正在刷新推荐…');
-    // A full reload is the stable, first-party refresh path. No undocumented signed API calls.
-    setTimeout(() => location.reload(), 180);
+    refreshTimeout = setTimeout(() => finishRefresh('官网暂未返回新的推荐，请稍后重试或确认已登录'), 12000);
+    try {
+      window.scrollTo(0, 0);
+      $$('.feeds-page').forEach(el => { el.scrollTop = 0; });
+      control.click();
+      log('FEED', '已触发官网原生推荐刷新');
+    } catch (error) {
+      finishRefresh('官网刷新控件暂不可用，请稍后重试');
+      log('ERROR', '原生刷新: ' + (error && error.message));
+    }
   }
   function back() {
     const close = $('.note-detail-mask .close-circle') ||
       $('.note-detail-mask .close-icon') || $('.note-detail-mask .close-btn');
     if (close) close.click();
     else if (history.length > 1) history.back();
-    else location.assign('https://www.xiaohongshu.com/explore');
+    else location.assign(homeUrl());
   }
   function follow() {
     // Restrict lookup to official navigation: a generic "关注" button may follow a stranger.
@@ -726,7 +835,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   }
   function profile() {
     // Do not choose the first arbitrary /user/profile/ URL: it could be another author's page.
-    const native = findNative('我', [
+    const native = nativeProfileEntry() || findNative('我', [
       '.side-bar','.side-bar-container','#sidebar','.header-container'
     ]);
     if (native) native.click();
@@ -735,7 +844,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function messages() {
     const a = nativeLink('/notification') || nativeLink('/message');
     if (a) { a.click(); return; }
-    const native = findNative('消息', ['.side-bar','.side-bar-container','body']);
+    const scopes = ['.side-bar','.side-bar-container','#sidebar'];
+    const native = findNative('消息', scopes) || findNative('通知', scopes) ||
+      findNative('Notifications', scopes);
     if (native) native.click();
     else notify('小红书网页版当前未提供可识别的消息入口');
   }
@@ -744,7 +855,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     switch (action) {
       case 'menu': showDialog('menu'); break;
       case 'search': showDialog('search'); break;
-      case 'home': location.assign('https://www.xiaohongshu.com/explore'); break;
+      case 'home':
+        if (pageView() === 'feed') refresh();
+        else location.assign(homeUrl());
+        break;
       case 'refresh': refresh(); break;
       case 'following': follow(); break;
       case 'back': back(); break;
@@ -753,7 +867,12 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       case 'resume': restoreRedWeb(); break;
       case 'messages': messages(); break;
       case 'publish':
-        location.assign('https://creator.xiaohongshu.com/publish/publish?source=official');
+        {
+          const native = $$('.side-bar a[href]').find(a =>
+            /^https:\/\/creator\.(xiaohongshu|rednote)\.com\//.test(a.href));
+          if (native) native.click();
+          else notify('当前官网没有可用的发布入口');
+        }
         break;
       case 'disable':
         try { localStorage.setItem(KEY, '1'); } catch (_) {}
@@ -810,8 +929,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         if (a.closest('#red-web-top,#red-web-bottom,#red-web-debug-panel,#red-web-menu,#red-web-search')) return false;
         try {
           const url = new URL(a.href, location.href);
-          return (url.hostname === 'www.xiaohongshu.com' ||
-            url.hostname === 'xiaohongshu.com') &&
+          return url.protocol === 'https:' && /^(www\.)?(xiaohongshu|rednote)\.com$/.test(url.hostname) &&
             /^\/(?:explore|discovery\/item)\/[^/]+/.test(url.pathname);
         } catch (_) { return false; }
       });
@@ -974,8 +1092,19 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function update() {
     if (!document.body) return;
     if (nativeLoginMode) return;
+    const loginOpen = Boolean(loginDialog());
+    const nextAuth = nativeProfileEntry() ? 'profile' : 'login';
+    document.body.dataset.redLoginOpen = String(loginOpen);
+    if (refreshInProgress) {
+      const fingerprint = feedFingerprint();
+      if (loginOpen) finishRefresh('请先完成官网登录，再刷新推荐');
+      else if (fingerprint && fingerprint.split('|').some(id => !refreshBefore.split('|').includes(id))) {
+        finishRefresh('推荐已更新');
+      }
+    }
     const view = pageView();
-    if (view !== currentView || location.pathname !== lastPath) {
+    if (view !== currentView || location.pathname !== lastPath || nextAuth !== authState) {
+      authState = nextAuth;
       currentView = view;
       lastPath = location.pathname;
       document.body.dataset.redView = view;
@@ -985,10 +1114,15 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     if (view === 'feed') decorateFeed();
   }
 
-  function scrollTop() {
-    const page = $('.feeds-page');
-    return Math.max(window.scrollY || 0, document.documentElement.scrollTop || 0,
-      page && page.scrollTop || 0);
+  function scrollTop(target) {
+    let top = Math.max(window.scrollY || 0, document.documentElement.scrollTop || 0,
+      document.scrollingElement && document.scrollingElement.scrollTop || 0);
+    for (let el = target; el && el !== document; el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY)) {
+        top = Math.max(top, el.scrollTop || 0);
+      }
+    }
+    return top;
   }
   function pullIndicator(text, offset) {
     let el = $('#red-web-pull');
@@ -1001,7 +1135,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     el.style.transform = 'translate(-50%,' + Math.min(0, -60 + offset) + 'px)';
   }
   function pullReset() {
-    pullStart = 0;
+    pullStart = null;
+    pullTarget = null;
     pullDistance = 0;
     const el = $('#red-web-pull');
     if (el) el.style.transform = 'translate(-50%,-60px)';
@@ -1036,27 +1171,37 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     }, true);
 
     document.addEventListener('touchstart', event => {
-      if (pageView() !== 'feed' || scrollTop() > 2 || event.touches.length !== 1 ||
-        event.target.closest('#red-web-top,#red-web-bottom,input,textarea,[contenteditable]')) {
-        pullStart = 0; return;
+      if (nativeLoginMode || refreshInProgress || loginDialog() || pageView() !== 'feed' ||
+        scrollTop(event.target) > 2 || event.touches.length !== 1 ||
+        event.target.closest('[id^="red-web-"],.note-detail-mask,input,textarea,[contenteditable]')) {
+        pullReset(); return;
       }
       pullStart = event.touches[0].clientY;
+      pullX = event.touches[0].clientX;
+      pullTarget = event.target;
       pullDistance = 0;
     }, { passive: true });
 
     document.addEventListener('touchmove', event => {
-      if (!pullStart || pageView() !== 'feed' || scrollTop() > 2) return;
+      if (pullStart === null) return;
+      if (event.touches.length !== 1 || pageView() !== 'feed' || scrollTop(pullTarget) > 2) {
+        pullReset(); return;
+      }
       const distance = event.touches[0].clientY - pullStart;
+      if (Math.abs(event.touches[0].clientX - pullX) > Math.abs(distance)) {
+        pullReset(); return;
+      }
       if (distance < 0) { pullDistance = 0; return; }
       pullDistance = Math.min(120, distance);
       if (pullDistance > 14) {
-        pullIndicator(pullDistance > 85 ? '松开刷新推荐' : '下拉刷新推荐',
+        if (event.cancelable) event.preventDefault();
+        pullIndicator(pullDistance >= 85 ? '松开刷新推荐' : '下拉刷新推荐',
           pullDistance * .72);
       }
-    }, { passive: true });
+    }, { passive: false });
 
     document.addEventListener('touchend', () => {
-      const ready = pullStart && pullDistance >= 85;
+      const ready = pullStart !== null && pullDistance >= 85;
       pullReset();
       if (ready) refresh();
     }, { passive: true });

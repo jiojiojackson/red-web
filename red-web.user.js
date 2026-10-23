@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.4.1
+// @version      0.4.2
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -30,7 +30,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const DESKTOP_KEY = 'red-web-desktop-mode';
   const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15';
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -396,8 +396,15 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   let lastPath = '';
   let timer;
   let bodyObserver;
+  let runtimeController;
+  let bootBody;
+  let runtimeGeneration = 0;
+  let feedCheckTimeout;
   let desktopLoading = false;
+  let desktopInstalled = false;
   let pendingDesktopLogin = false;
+  let loginOpening = false;
+  let loginWaitTimeout;
   let toastTimeout;
   let pullStart = null;
   let pullX = 0;
@@ -444,7 +451,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function loginElements() {
     return $$('button,a,[role="button"],.login-btn,.login-button,.login-entry')
       .filter(el => !el.closest('[id^="red-web-"],.login-modal,.login-container')
-        && /^(登录|立即登录|注册\s*\/\s*登录|登录\s*\/\s*注册|登录账号|Log in|Sign in)$/i.test((el.innerText || el.textContent || '').trim()));
+        && (el.id === 'login-btn' || el.classList?.contains('login-btn') ||
+          /^(登录|立即登录|注册\s*\/\s*登录|登录\s*\/\s*注册|登录账号|Log in|Sign in|ログイン|サインイン|ログイン[\/・／]新規登録|新規登録[\/・／]ログイン)$/i
+            .test((el.innerText || el.textContent || el.getAttribute?.('aria-label') || '').trim())));
   }
   function snapshot() {
     const cards = selectNoteCards();
@@ -475,6 +484,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         Array.from(root.classList).slice(0,3).join('.') :
         (heading && cards.length ? '移动版原生布局（保留）' : '未识别')),
       '官方登录入口: ' + loginElements().length,
+      '电脑版: ' + desktopDocument() + ' | 页面载入中: ' + desktopLoading +
+        ' | 登录准备中: ' + (pendingDesktopLogin || loginOpening),
       '原生详情: ' + Boolean($('.note-detail-mask,#noteContainer')),
       '日志数量: ' + debugLines.length,
       '注意：不记录登录凭证、Cookie、正文或 URL 参数'
@@ -626,6 +637,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     if (!top.isConnected) document.body.appendChild(top);
     if (!bottom.isConnected) document.body.appendChild(bottom);
     setRefreshing(refreshInProgress);
+    setLoginBusy();
   }
 
   function findNative(label, scopes = []) {
@@ -656,8 +668,61 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function loginDialog() {
     return $$('.login-modal,.login-container').find(isVisible);
   }
+  function loggedIn() {
+    return Boolean($('#global[data-logged="1"]') || nativeProfileEntry());
+  }
+  function nativeLoginEntry() {
+    const candidates = loginElements();
+    const actionable = candidates.filter(el => el.matches('button,a,[role="button"]'));
+    return actionable.find(isVisible) || actionable[0] || candidates.find(isVisible) || candidates[0];
+  }
+  function setLoginBusy() {
+    $$('[data-red-action="login"]').forEach(el => {
+      el.disabled = desktopLoading || pendingDesktopLogin || loginOpening;
+      el.setAttribute('aria-busy', String(el.disabled));
+    });
+  }
+  function finishLoginWait() {
+    clearTimeout(loginWaitTimeout);
+    pendingDesktopLogin = false;
+    loginOpening = false;
+    setLoginBusy();
+  }
+  function syncPendingLogin() {
+    if (!pendingDesktopLogin && !loginOpening) return;
+    if (loginDialog() || loggedIn()) { finishLoginWait(); return; }
+    if (!pendingDesktopLogin) return;
+    const entry = nativeLoginEntry();
+    if (!entry) return; // Wait for the official app to finish rendering, without replacing it.
+    pendingDesktopLogin = false;
+    loginOpening = true;
+    try {
+      entry.click();
+      log('AUTH', '已触发官网原生登录弹窗');
+      if (loginDialog() || loggedIn()) finishLoginWait();
+    } catch (error) {
+      finishLoginWait();
+      log('ERROR', '原生登录: ' + (error && error.message));
+      notify('官网登录入口暂不可用，请稍后重试');
+    }
+  }
+  function waitForNativeLogin() {
+    if (pendingDesktopLogin || loginOpening) return;
+    pendingDesktopLogin = true;
+    setLoginBusy();
+    clearTimeout(loginWaitTimeout);
+    loginWaitTimeout = setTimeout(() => {
+      const ready = Boolean(loginDialog() || loggedIn());
+      finishLoginWait();
+      if (!ready) {
+        log('AUTH', '官网登录入口尚未就绪，保留当前电脑版页面');
+        notify('官网登录入口尚未准备好，请稍后点击登录重试');
+      }
+    }, 15000);
+    syncPendingLogin();
+  }
   function desktopDocument() {
-    return Boolean($('script[src*="/xhs-pc-web/"]'));
+    return desktopInstalled || Boolean($('script[src*="/xhs-pc-web/"]'));
   }
   function desktopHtml(response, url) {
     const final = new URL(response.finalUrl || response.responseURL || url, url);
@@ -687,44 +752,51 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
           const task = GM.xmlHttpRequest(details);
           if (task && typeof task.then === 'function') task.then(resolve, reject);
         } else if (typeof GM_xmlhttpRequest === 'function') GM_xmlhttpRequest(details);
-        else reject(Error('请重新安装 v0.4.1 并加载脚本，以启用官网页面读取接口'));
+        else reject(Error('请重新安装 v0.4.2 并加载脚本，以启用官网页面读取接口'));
       } catch (error) { reject(error); }
     });
   }
-  async function loadDesktopLogin() {
+  async function loadDesktopLogin(openLogin = true) {
     if (desktopLoading) return;
+    if (desktopDocument()) {
+      if (openLogin) waitForNativeLogin();
+      return;
+    }
     desktopLoading = true;
-    $$('[data-red-action="login"]').forEach(el => { el.disabled = true; });
-    notify('正在打开官网电脑版登录…');
+    setLoginBusy();
+    notify(openLogin ? '正在打开官网电脑版登录…' : '正在恢复电脑版页面…');
     log('AUTH', '读取当前官网电脑版页面');
     try {
-      const url = homeUrl();
+      const url = openLogin ? homeUrl() : location.href;
       const html = desktopHtml(await requestDesktopPage(url), url);
       // Keep the same origin and URL. Official scripts own all credentials and requests.
       // Do not move a login form or cookies from the desktop browser to this device.
       try { sessionStorage.setItem(DESKTOP_KEY, '1'); } catch (_) {}
-      clearInterval(timer);
-      if (bodyObserver) bodyObserver.disconnect();
+      stopRuntime();
       clearTimeout(toastTimeout);
       clearTimeout(refreshTimeout);
       refreshInProgress = false;
       currentView = ''; lastPath = ''; authState = '';
       nativeLoginMode = false;
-      pendingDesktopLogin = true;
+      finishLoginWait();
       window.stop();
       document.open();
       document.write(html);
       document.close();
+      desktopInstalled = true;
       desktopLoading = false;
+      const resume = () => {
+        start();
+        if (openLogin) waitForNativeLogin();
+      };
       if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', start, { once: true });
-      } else start();
+        document.addEventListener('DOMContentLoaded', resume, { once: true });
+      } else resume();
     } catch (error) {
       desktopLoading = false;
-      pendingDesktopLogin = false;
+      finishLoginWait();
       try { sessionStorage.removeItem(DESKTOP_KEY); } catch (_) {}
-      if (!$('#red-web-top')) start();
-      $$('[data-red-action="login"]').forEach(el => { el.disabled = false; });
+      if (!$('#red-web-top')) { bootBody = null; start(); }
       log('ERROR', '电脑版登录: ' + (error && error.message));
       notify(error && error.message || '电脑版登录暂不可用');
     }
@@ -791,25 +863,17 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     debugVisible = false;
     renderDebug();
     if (nativeLoginMode) restoreRedWeb();
+    if (desktopLoading || pendingDesktopLogin || loginOpening) return;
     if (loginDialog()) { update(); return; }
     const account = nativeProfileEntry();
     if (account) { account.click(); return; }
-    const candidates = loginElements();
-    const actionable = candidates.filter(el => el.matches('button,a,[role="button"]'));
-    const entry = actionable.find(isVisible) || actionable[0] || candidates.find(isVisible) || candidates[0];
-    log('AUTH', '官网登录检测：原生入口数=' + candidates.length);
-    if (!entry) {
+    if (loggedIn()) { notify('已登录，正在同步官网账号入口'); update(); return; }
+    log('AUTH', '官网登录检测：原生入口数=' + loginElements().length);
+    if (desktopDocument() || nativeLoginEntry()) {
+      waitForNativeLogin();
+    } else {
       log('AUTH', '当前手机页无原生入口，直接加载官网电脑版登录');
       loadDesktopLogin();
-      return;
-    }
-    try {
-      entry.click();
-      log('AUTH', '已尝试点击小红书原生登录按钮');
-      update();
-    } catch (error) {
-      log('ERROR', '原生登录入口不可用: ' + (error && error.message));
-      showLoginGuide();
     }
   }
   function showDialog(kind) {
@@ -935,15 +999,26 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     if (native) native.click();
     else notify('小红书网页版当前未提供可识别的消息入口');
   }
+  function goHome() {
+    if (pageView() === 'feed') { refresh(); return; }
+    const home = new URL(homeUrl());
+    const entry = $$('.side-bar a[href],.side-bar-container a[href],#sidebar a[href],.header-container a[href]')
+      .find(a => {
+        try {
+          const url = new URL(a.href, location.href);
+          return url.origin === home.origin && url.pathname === home.pathname &&
+            !a.closest('[id^="red-web-"]');
+        } catch (_) { return false; }
+      });
+    if (entry) { entry.click(); return; }
+    location.assign(home.href);
+  }
 
   function onAction(action) {
     switch (action) {
       case 'menu': showDialog('menu'); break;
       case 'search': showDialog('search'); break;
-      case 'home':
-        if (pageView() === 'feed') refresh();
-        else location.assign(homeUrl());
-        break;
+      case 'home': goHome(); break;
       case 'refresh': refresh(); break;
       case 'following': follow(); break;
       case 'back': back(); break;
@@ -1178,20 +1253,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     if (!document.body) return;
     if (nativeLoginMode) return;
     const loginOpen = Boolean(loginDialog());
-    const nextAuth = nativeProfileEntry() ? 'profile' : 'login';
+    const nextAuth = loggedIn() ? 'profile' : 'login';
     document.body.dataset.redLoginOpen = String(loginOpen);
-    if (pendingDesktopLogin) {
-      if (loginOpen || nextAuth === 'profile') pendingDesktopLogin = false;
-      else {
-        const candidates = loginElements();
-        const entry = candidates.find(el => el.matches('button')) || candidates[0];
-        if (entry) {
-          pendingDesktopLogin = false;
-          entry.click();
-          log('AUTH', '已打开官网电脑版登录弹窗');
-        }
-      }
-    }
+    syncPendingLogin();
     if (refreshInProgress) {
       const fingerprint = feedFingerprint();
       if (loginOpen) finishRefresh('请先完成官网登录，再刷新推荐');
@@ -1243,11 +1307,24 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     }
   }
 
+  function stopRuntime() {
+    if (runtimeController) runtimeController.abort();
+    if (bodyObserver) bodyObserver.disconnect();
+    clearInterval(timer);
+    clearTimeout(feedCheckTimeout);
+    bootBody = null;
+    runtimeGeneration++;
+  }
   function start() {
-    if (!document.body) return;
+    if (!document.body || bootBody === document.body) return;
+    stopRuntime();
+    bootBody = document.body;
+    runtimeController = new AbortController();
+    const signal = runtimeController.signal;
+    const generation = runtimeGeneration;
     let preferDesktop = false;
     try { preferDesktop = sessionStorage.getItem(DESKTOP_KEY) === '1'; } catch (_) {}
-    if (preferDesktop && !desktopDocument()) { addCss(); loadDesktopLogin(); return; }
+    if (preferDesktop && !desktopDocument()) { addCss(); loadDesktopLogin(false); return; }
     addCss();
     document.body.classList.add('red-web');
     log('BOOT', 'Red Web v' + VERSION + ' 已启动；路径 ' + safeViewPath());
@@ -1272,7 +1349,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         return;
       }
       authorFallback(event);
-    }, true);
+    }, { capture: true, signal });
 
     document.addEventListener('touchstart', event => {
       if (nativeLoginMode || refreshInProgress || loginDialog() || pageView() !== 'feed' ||
@@ -1284,7 +1361,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       pullX = event.touches[0].clientX;
       pullTarget = event.target;
       pullDistance = 0;
-    }, { passive: true });
+    }, { passive: true, signal });
 
     document.addEventListener('touchmove', event => {
       if (pullStart === null) return;
@@ -1302,35 +1379,39 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         pullIndicator(pullDistance >= 85 ? '松开刷新推荐' : '下拉刷新推荐',
           pullDistance * .72);
       }
-    }, { passive: false });
+    }, { passive: false, signal });
 
     document.addEventListener('touchend', () => {
       const ready = pullStart !== null && pullDistance >= 85;
       pullReset();
       if (ready) refresh();
-    }, { passive: true });
-    document.addEventListener('touchcancel', pullReset, { passive: true });
+    }, { passive: true, signal });
+    document.addEventListener('touchcancel', pullReset, { passive: true, signal });
 
     let pending = false;
     bodyObserver = new MutationObserver(() => {
-      if (pending) return;
+      if (pending || generation !== runtimeGeneration) return;
       pending = true;
       requestAnimationFrame(() => {
         pending = false;
+        if (generation !== runtimeGeneration) return;
         try { update(); }
         catch (error) { log('ERROR', 'DOM 更新: ' + (error && error.message)); }
       });
     });
-    bodyObserver.observe(document.body, { subtree: true, childList: true });
-    window.addEventListener('popstate', update);
+    bodyObserver.observe(document.body, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['class', 'style', 'data-logged']
+    });
+    window.addEventListener('popstate', update, { signal });
     timer = setInterval(() => {
       try { update(); }
       catch (error) { log('ERROR', '定时检测: ' + (error && error.message)); }
     }, 1700);
     try { update(); }
     catch (error) { log('ERROR', '首次检测: ' + (error && error.message)); }
-    setTimeout(() => {
-      if (pageView() !== 'feed') return;
+    feedCheckTimeout = setTimeout(() => {
+      if (generation !== runtimeGeneration || pageView() !== 'feed') return;
       const count = selectNoteCards().length;
       log('CHECK', '延迟检测：笔记卡片=' + count + '，原生链接=' + noteLinks().length);
       if (!count) notify('未识别到笔记卡片，请点右下角「调试」复制报告');

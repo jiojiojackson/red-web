@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf8');
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.1');
+  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.2');
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -123,7 +124,7 @@ test('login without a native entry loads the official desktop page', () => {
 test('desktop loader requests only official HTML with a desktop User-Agent', async () => {
   let captured;
   const request = new Function('GM', 'GM_xmlhttpRequest', 'DESKTOP_UA',
-    section('requestDesktopPage(url)', 'loadDesktopLogin()').replace(/\s+async\s*$/, '') +
+    section('requestDesktopPage(url)', 'loadDesktopLogin(') +
     '\nreturn requestDesktopPage;'
   )({ xmlHttpRequest(details) {
     captured = details;
@@ -154,10 +155,10 @@ test('desktop HTML validation rejects redirects to other sites and mobile HTML',
 
 test('missing extension request API fails with an actionable update message', async () => {
   const request = new Function('GM', 'GM_xmlhttpRequest', 'DESKTOP_UA',
-    section('requestDesktopPage(url)', 'loadDesktopLogin()').replace(/\s+async\s*$/, '') +
+    section('requestDesktopPage(url)', 'loadDesktopLogin(') +
     '\nreturn requestDesktopPage;'
   )(undefined, undefined, 'Desktop Safari');
-  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.1/);
+  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.2/);
 });
 
 test('diagnostics expose no media URLs and preserve H5 native grid', () => {
@@ -192,7 +193,8 @@ test('home navigation preserves the current official domain and route', () => {
 
 test('English and Chinese login entries exclude script UI and login form submits', () => {
   const make = (text, excluded = false) => ({ textContent: text, closest: () => excluded ? {} : null });
-  const native = [make('登录'), make('Log In'), make('Sign in')];
+  const native = [make('登录'), make('Log In'), make('Sign in'), make('ログイン'),
+    { ...make(''), id: 'login-btn' }];
   const all = [...native, make('关注'), make('登录', true)];
   const select = new Function('$$', section('loginElements()', 'snapshot()') +
     '\nreturn loginElements;')(() => all);
@@ -209,19 +211,120 @@ test('account navigation never selects a card author or a different origin', () 
   assert.equal(get(), me);
 });
 
-test('login uses the hidden native button without dismantling the mobile interface', () => {
-  let clicks = 0, guides = 0, updates = 0;
-  const hiddenButton = { matches: () => true, click: () => { clicks++; } };
-  const login = new Function('$', 'renderDebug', 'nativeProfileEntry', 'loginElements',
-    'loginDialog', 'isVisible', 'log', 'showLoginGuide', 'update',
-    'let debugVisible = false, nativeLoginMode = false;\n' +
-    section('officialLogin()', 'showDialog(kind)') + '\nreturn officialLogin;'
-  )(() => null, () => {}, () => null, () => [hiddenButton], () => null,
-    () => false, () => {}, () => { guides++; }, () => { updates++; });
-  login();
+function loginHarness({ desktop = false, ready = false } = {}) {
+  const state = { desktop, ready, modal: false, logged: false, clicks: 0, downloads: 0 };
+  const timers = new Map(), messages = [];
+  const control = { disabled: false, setAttribute() {} };
+  const native = { matches: () => true, click() { state.clicks++; state.modal = true; } };
+  const context = {
+    state, $: () => null, $$: () => [control], isVisible: () => false,
+    loginElements: () => state.ready ? [native] : [],
+    loginDialog: () => state.modal, loggedIn: () => state.logged,
+    nativeProfileEntry: () => null, desktopDocument: () => state.desktop,
+    notify: message => messages.push(message), log() {}, update() {}, renderDebug() {},
+    setTimeout: callback => { timers.set(1, callback); return 1; }, clearTimeout: id => timers.delete(id)
+  };
+  const api = runInNewContext(`
+    let desktopLoading = false, pendingDesktopLogin = false, loginOpening = false, loginWaitTimeout;
+    let nativeLoginMode = false, debugVisible = false;
+    function loadDesktopLogin() { state.downloads++; desktopLoading = true; }
+    ${section('nativeLoginEntry()', 'desktopDocument()')}
+    ${section('officialLogin()', 'showDialog(kind)')}
+    ({ officialLogin, syncPendingLogin, waitForNativeLogin,
+      installed() { desktopLoading = false; state.desktop = true; waitForNativeLogin(); } });
+  `, context);
+  return { ...api, state, control, timers, messages };
+}
+
+test('hidden native login button opens once without replacing the document', () => {
+  const h = loginHarness({ desktop: true, ready: true });
+  h.officialLogin(); h.officialLogin();
+  assert.equal(h.state.clicks, 1);
+  assert.equal(h.state.downloads, 0);
+  assert.equal(h.control.disabled, false);
+});
+
+test('delayed desktop initialization never triggers another HTML replacement', () => {
+  const h = loginHarness();
+  h.officialLogin(); h.officialLogin();
+  assert.equal(h.state.downloads, 1);
+  h.installed();
+  h.officialLogin(); h.officialLogin();
+  assert.equal(h.state.downloads, 1);
+  assert.equal(h.control.disabled, true);
+  h.state.ready = true;
+  h.syncPendingLogin(); h.syncPendingLogin();
+  assert.equal(h.state.clicks, 1);
+  assert.equal(h.state.downloads, 1);
+  assert.equal(h.control.disabled, false);
+});
+
+test('login preparation timeout allows retry on the current desktop page', () => {
+  const h = loginHarness({ desktop: true });
+  h.officialLogin();
+  h.timers.get(1)();
+  assert.equal(h.control.disabled, false);
+  h.state.ready = true;
+  h.officialLogin();
+  assert.equal(h.state.clicks, 1);
+  assert.equal(h.state.downloads, 0);
+});
+
+test('a logged-in page never downloads HTML or opens another login dialog', () => {
+  const h = loginHarness({ desktop: true });
+  h.state.logged = true;
+  h.officialLogin();
+  assert.equal(h.state.downloads, 0);
+  assert.equal(h.state.clicks, 0);
+  assert.match(h.messages[0], /已登录/);
+});
+
+test('returning from profile uses official SPA navigation without a full reload', () => {
+  let clicks = 0;
+  const home = { href: 'https://www.rednote.com/?channel_id=homefeed_recommend',
+    closest: () => null, click: () => { clicks++; } };
+  const go = new Function('$$', 'location', 'homeUrl', 'pageView', 'refresh',
+    section('goHome()', 'onAction(action)') + '\nreturn goHome;'
+  )(() => [home], { href: 'https://www.rednote.com/user/profile/me', assign() { assert.fail('must not reload'); } },
+    () => 'https://www.rednote.com/', () => 'profile', () => assert.fail('must not refresh before navigation'));
+  go();
   assert.equal(clicks, 1);
-  assert.equal(guides, 0);
-  assert.equal(updates, 1);
+});
+
+test('runtime starts once per document body and disposes old listeners and timers', () => {
+  const intervals = new Set(), timeouts = new Set(), signals = [];
+  let nextId = 0, boots = 0, disconnects = 0;
+  const document = { body: { classList: { add() {} } }, addEventListener(type, callback, options) {
+    if (type === 'click') signals.push(options.signal);
+  } };
+  const context = {
+    document, window: { addEventListener() {} }, AbortController,
+    sessionStorage: { getItem: () => null }, DESKTOP_KEY: 'test', VERSION: 'test',
+    $: () => ({ setAttribute() {} }), addCss() {}, debugControl() {}, safeViewPath: () => '/',
+    log(kind) { if (kind === 'BOOT') boots++; }, update() {}, pullReset() {},
+    MutationObserver: class { observe() {} disconnect() { disconnects++; } },
+    setInterval() { const id = ++nextId; intervals.add(id); return id; },
+    clearInterval: id => intervals.delete(id),
+    setTimeout() { const id = ++nextId; timeouts.add(id); return id; },
+    clearTimeout: id => timeouts.delete(id)
+  };
+  const end = source.lastIndexOf("\n  if (document.readyState === 'loading')");
+  const api = runInNewContext(`
+    let runtimeController, bodyObserver, bootBody, timer, feedCheckTimeout, runtimeGeneration = 0;
+    ${source.slice(source.indexOf('  function stopRuntime()'), end)}
+    ({ start });
+  `, context);
+  api.start(); api.start();
+  assert.equal(boots, 1);
+  assert.equal(signals.length, 1);
+  document.body = { classList: { add() {} } };
+  api.start();
+  assert.equal(boots, 2);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(signals[1].aborted, false);
+  assert.equal(intervals.size, 1);
+  assert.equal(timeouts.size, 1);
+  assert.equal(disconnects, 1);
 });
 
 function refreshHarness({ native = true, hot = false, dialog = false, inactiveChannel = false } = {}) {
@@ -303,12 +406,12 @@ test('mobile bars expose login immediately, then update when account navigation 
   for (const authState of ['login', 'profile']) {
     const nodes = {};
     const document = { createElement: () => ({ isConnected: false }), body: { appendChild(node) { nodes[node.id] = node; } } };
-    const draw = new Function('$', 'document', 'authState', 'svg', 'button', 'setRefreshing',
+    const draw = new Function('$', 'document', 'authState', 'svg', 'button', 'setRefreshing', 'setLoginBusy',
       'const refreshInProgress = false;\n' + section('drawBars(view)', 'findNative(label, scopes = [])') +
       '\nreturn drawBars;'
     )(() => null, document, authState, () => '',
       new Function('svg', section('button(action, label, icon, cls =', 'drawBars(view)') + '\nreturn button;')(() => ''),
-      () => {});
+      () => {}, () => {});
     draw('feed');
     const label = authState === 'login' ? '登录' : '我';
     assert.ok(nodes['red-web-top'].innerHTML.includes('>' + label + '</button>'));

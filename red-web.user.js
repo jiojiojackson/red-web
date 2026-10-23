@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.2.3
+// @version      0.3.0
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -22,7 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.2.3';
+  const VERSION = '0.3.0';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -284,7 +284,24 @@ body.red-web[data-red-view="feed"] [data-red-feed-root="true"].red-web-mobile-gr
   max-width: 100% !important; height: auto !important;
 }
 body.red-web[data-red-view="feed"] .red-web-promo-hidden { display: none !important; }
-body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !important; }
+body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !important; }
+#red-web-top[hidden], #red-web-bottom[hidden] { display: none !important; }
+#red-web-login-guide {
+  position: fixed !important; inset: 0; background: #0008; z-index: 2147483800;
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+  padding: 18px;
+}
+#red-web-login-guide > .red-web-login-card {
+  width: min(100%, 440px); max-height: 80dvh; overflow: auto; border-radius: 16px;
+  background: white; color: #222; box-sizing: border-box; padding: 22px;
+  box-shadow: 0 12px 36px #0003; font: 14px/1.7 -apple-system,BlinkMacSystemFont,sans-serif;
+}
+#red-web-login-guide h3 { font-size: 18px; margin: 0 0 9px; }
+#red-web-login-guide p { margin: 8px 0; color: #555; }
+#red-web-login-guide .red-web-login-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+#red-web-login-guide button { background: #f7f7f7; color: #222; padding: 10px 13px; border-radius: 9px;
+  border: 1px solid #ddd; font: inherit; }
+#red-web-login-guide button.red-web-login-primary { background: #ff2442; color: #fff; border-color: #ff2442; }
 #red-web-debug-toggle {
   position: fixed !important; right: 10px; bottom: calc(76px + env(safe-area-inset-bottom));
   z-index: 2147483600; color: #fff; background: #2229; border: 1px solid #fff9;
@@ -393,13 +410,17 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     const heading = popularHeading();
     const anchors = noteLinks();
     const root = $('[data-red-feed-root="true"]');
+    const visual = visualNoteCandidates();
+    const images = $$('img,video,[style*="background-image"]').length;
     const lines = [
       'Red Web ' + VERSION,
       '页面: ' + safeViewPath() + ' | 视图: ' + pageView(),
       '屏幕: ' + window.innerWidth + 'x' + window.innerHeight,
       '加载: ' + document.readyState + ' | 触屏: ' + ('ontouchstart' in window),
       '笔记链接: ' + anchors.length + ' | note-item: ' + $$('.note-item').length,
-      '识别卡片: ' + cards.length + ' | 热门笔记标题: ' + Boolean(heading),
+      '识别卡片: ' + cards.length + ' | 视觉候选: ' + visual.length +
+        ' | 媒体元素: ' + images,
+      '热门笔记标题: ' + Boolean(heading) + ' | 图片/无链接也可识别',
       '布局容器: ' + (root ? root.tagName.toLowerCase() + '.' +
         Array.from(root.classList).slice(0,3).join('.') : '未识别'),
       '官方登录入口: ' + loginElements().length,
@@ -576,12 +597,35 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     log('AUTH', '恢复脚本界面');
     update();
   }
-  function officialLogin() {
-    const candidates = loginElements();
-    const entry = candidates.find(isVisible) || candidates[0];
-    log('AUTH', '请求官网登录，原生入口数=' + candidates.length);
-    // The first-party website owns authentication. The script must not guess a /login URL:
-    // its previously hardcoded URL is a Xiaohongshu 404.
+  function showLoginGuide() {
+    if ($('#red-web-login-guide')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'red-web-login-guide';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-label', '小红书官网登录说明');
+    overlay.innerHTML = '<div class="red-web-login-card">' +
+      '<h3>当前手机页面没有登录入口</h3>' +
+      '<p>Red Web 已检查该页面，未找到小红书官方登录按钮。无法由脚本自行创建账号登录或绕过官网限制。</p>' +
+      '<p><b>建议：</b>在 Safari 地址栏菜单选择「请求桌面网站」，然后访问官方「发现」页面。如果出现官网登录按钮，请使用官方短信验证或扫码。</p>' +
+      '<p>请注意：切换网站显示方式需要您在 Safari 中手动操作，脚本不能直接修改 Safari 的用户代理设置。</p>' +
+      '<div class="red-web-login-buttons">' +
+      '<button type="button" data-rw-login="close">返回</button>' +
+      '<button type="button" data-rw-login="original">查看官网原版</button>' +
+      '<button type="button" class="red-web-login-primary" data-rw-login="explore">打开官方发现页</button>' +
+      '</div></div>';
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) { overlay.remove(); return; }
+      const button = event.target.closest('[data-rw-login]');
+      if (!button) return;
+      const action = button.dataset.rwLogin;
+      overlay.remove();
+      if (action === 'original') switchToOriginal();
+      if (action === 'explore') location.assign('https://www.xiaohongshu.com/explore');
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function switchToOriginal() {
     nativeLoginMode = true;
     document.body.classList.remove('red-web');
     document.body.dataset.redLoginOpen = 'true';
@@ -590,17 +634,26 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     if (top) top.hidden = true;
     if (bottom) bottom.hidden = true;
     $('#red-web-menu')?.remove();
-    if (entry) {
-      setTimeout(() => {
-        try {
-          entry.click();
-          log('AUTH', '已点击官网原生登录入口；请检查是否出现官方弹窗');
-        } catch (error) { log('ERROR', '官网登录入口点击失败: ' + (error && error.message)); }
-      }, 80);
-      notify('已切换官方界面，尝试打开官网登录');
-    } else {
-      log('WARN', '官网当前页面未找到登录按钮；不再跳转不存在的 /login 页面');
-      notify('已切换官方原版，请使用官网登录按钮；没有按钮可尝试 Safari 请求桌面网站');
+    log('AUTH', '进入官网原版模式，需用户手动完成登录');
+    notify('已切换原版；登录后点调试窗口的「恢复脚本」');
+  }
+
+  function officialLogin() {
+    const candidates = loginElements();
+    const entry = candidates.find(isVisible) || candidates[0];
+    log('AUTH', '官网登录检测：原生入口数=' + candidates.length);
+    if (!entry) {
+      log('AUTH', '手机端官网未提供登录按钮，显示官网桌面模式操作指引');
+      showLoginGuide();
+      return;
+    }
+    switchToOriginal();
+    try {
+      entry.click();
+      log('AUTH', '已尝试点击小红书原生登录按钮');
+    } catch (error) {
+      log('ERROR', '原生登录入口不可用: ' + (error && error.message));
+      showLoginGuide();
     }
   }
   function showDialog(kind) {

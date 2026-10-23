@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#fff9f9">
+<meta name="description" content="Red Web：让小红书官方网页更适合 iPhone Safari 浏览的开源用户脚本。无需服务器，保留官网登录和评论。">
+<title>Red Web — 小红书移动网页增强</title>
+<style>
+:root { color-scheme:light; --red:#ff2442; --ink:#20222b; --muted:#6d727e; --line:#f1e6e8; --paper:#fff; --soft:#fff6f6; }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; background:radial-gradient(ellipse at 80% 3%,#ffe3e6 0,transparent 37%),linear-gradient(#fffafa 0,#fff 530px);color:var(--ink);font:16px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Segoe UI",sans-serif; }
+a {color:inherit;text-decoration:none}
+button,a { -webkit-tap-highlight-color:transparent; }
+.container {max-width:1060px;padding:0 24px;margin:auto}
+nav {display:flex;align-items:center;justify-content:space-between;padding:24px 0}
+.brand {font-size:19px;font-weight:800;letter-spacing:-.7px;display:flex;align-items:center;gap:9px}
+.brand-mark {width:34px;height:34px;background:var(--red);display:grid;place-items:center;color:white;border-radius:11px;font-weight:900}
+.nav-link {font-size:14px;font-weight:600;border:1px solid #eddfe1;border-radius:100px;padding:8px 16px;background:#fff9}
+.hero {display:grid;grid-template-columns:1.1fr .9fr;align-items:center;gap:52px;padding:82px 0 70px}
+.eyebrow {display:inline-flex;gap:8px;align-items:center;font-size:12px;color:#b11f3e;font-weight:750;background:#ffe8eb;border:1px solid #ffd6dd;border-radius:30px;padding:7px 12px}
+.eyebrow .dot {width:7px;height:7px;background:var(--red);border-radius:50%}
+h1 {font-size:clamp(39px,5vw,64px);line-height:1.13;letter-spacing:-2.2px;margin:23px 0 22px;font-weight:850}
+h1 em {font-style:normal;color:var(--red)}
+.lead {font-size:17px;color:#616574;max-width:540px;margin:0 0 31px}
+.cta {display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn {display:inline-flex;gap:10px;align-items:center;justify-content:center;min-height:50px;padding:0 21px;border-radius:13px;font-size:15px;font-weight:720;transition:transform .15s,box-shadow .15s}
+.btn:hover {transform:translateY(-2px)}
+.primary {background:var(--red);color:white;box-shadow:0 10px 23px #ff24422a}
+.secondary {background:#fff;border:1px solid #eadfe1;color:#3d3c46}
+.hint {margin-top:13px;font-size:12px;color:var(--muted)}
+.mock-wrap {position:relative;display:flex;justify-content:center}
+.aura {position:absolute;width:440px;height:440px;max-width:110%;border-radius:50%;background:linear-gradient(135deg,#ffcad3,#fff1f3);filter:blur(3px);top:60px;left:50%;transform:translateX(-50%)}
+.phone {position:relative;width:min(100%,304px);height:592px;border-radius:39px;padding:8px;background:#25242b;box-shadow:0 24px 55px #39202837,0 2px 5px #0002;transform:rotate(3deg)}
+.screen {height:100%;border-radius:31px;overflow:hidden;background:white;position:relative}
+.dynamic {position:absolute;top:8px;left:50%;transform:translateX(-50%);width:80px;height:20px;border-radius:20px;background:#222;z-index:2}
+.status {height:39px;padding:10px 19px 0;display:flex;justify-content:space-between;font-weight:700;font-size:10px}
+.phone-head {height:47px;display:flex;align-items:center;justify-content:space-between;padding:0 15px;border-bottom:1px solid #f3f3f3;font-size:14px}
+.phone-head .light {color:#aaa}
+.phone-head strong {position:relative}
+.phone-head strong::after {content:"";position:absolute;bottom:-9px;left:4px;right:4px;height:3px;background:var(--red);border-radius:4px}
+.cards {display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;background:#fafafa}
+.mini-card {background:white;overflow:hidden;border-radius:7px;box-shadow:0 2px 5px #00000008}
+.art {height:145px;position:relative;overflow:hidden}
+.art-a {background:linear-gradient(130deg,#221d34,#a33c52 58%,#ffb06a)}
+.art-a::after {content:"";position:absolute;bottom:0;left:-20%;width:150%;height:52%;background:repeating-linear-gradient(140deg,#ffffff14 0 2px,transparent 2px 14px)}
+.art-b {background:linear-gradient(145deg,#bedaf2,#788fac 48%,#e5c8a4)}
+.art-b::before {content:"";position:absolute;left:28px;top:34px;width:118px;height:85px;background:#ded9cd;transform:rotate(-12deg);border:5px solid #fff;border-radius:9px;box-shadow:0 10px 22px #272d4c55}
+.art-c {background:linear-gradient(145deg,#88c6e4,#2c6ba3 63%,#243a70)}
+.art-c::after {content:"";position:absolute;top:64px;left:49px;width:47px;height:47px;border-radius:50%;box-shadow:inset -10px -8px 4px #a3d8f2;background:#fff;opacity:.85}
+.art-d {background:linear-gradient(135deg,#c7f28d,#46ca74)}
+.art-d::before {content:"★";color:#fff;position:absolute;left:23px;top:20px;font-size:100px;transform:rotate(-16deg);opacity:.78}
+.mini-info {padding:7px 8px 9px}
+.mini-title {font-size:11px;line-height:1.4;font-weight:650;min-height:30px}
+.mini-author {display:flex;align-items:center;gap:5px;color:#9a9aa0;font-size:9px;margin-top:6px}
+.avatar {width:15px;height:15px;background:linear-gradient(130deg,#ffd8b6,#eb828f);border-radius:100%}
+.phone-bottom {height:53px;background:white;border-top:1px solid #eee;display:flex;align-items:center;justify-content:space-around;position:absolute;bottom:0;left:0;right:0;font-size:9px}
+.phone-bottom strong {display:grid;place-items:center;background:var(--red);width:40px;height:32px;border-radius:9px;color:white;font-size:27px;font-weight:400}
+.phone-bottom .nav-item {display:flex;align-items:center;flex-direction:column;line-height:1.35;font-size:10px}
+.phone-bottom .nav-item b {font-size:19px;line-height:1.1;font-weight:500}
+.section {padding:76px 0}
+.section-head {font-size:clamp(29px,4vw,37px);margin:0 0 13px;line-height:1.25;letter-spacing:-.9px}
+.sub {color:var(--muted);margin:0 0 30px;max-width:640px}
+.feature-grid {display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feature {padding:24px;border-radius:18px;border:1px solid #f0ecef;background:#fff;box-shadow:0 7px 17px #33333305}
+.feature-icon {width:42px;height:42px;border-radius:13px;background:#fff0f1;color:var(--red);display:grid;place-items:center;font-size:23px;margin-bottom:13px}
+.feature h3 {font-size:16px;margin:0 0 6px}
+.feature p {font-size:13px;margin:0;color:var(--muted);line-height:1.65}
+.steps-bg {background:#faf9fa;border-block:1px solid #f1eff1}
+.steps {display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:29px}
+.step {padding:22px 24px;background:white;border-radius:16px;border:1px solid #efedef;display:flex;gap:14px}
+.number {background:#ffe9ed;color:var(--red);width:31px;height:31px;border-radius:10px;flex:0 0 31px;display:grid;place-items:center;font-weight:750}
+.step h3 {font-size:15px;margin:0 0 6px}
+.step p {font-size:13px;margin:0;color:var(--muted)}
+.step a {color:#e32949;text-decoration:underline;text-underline-offset:3px}
+.notice {font-size:13px;line-height:1.8;border-radius:13px;border:1px solid #ffddd0;background:#fff8f2;padding:16px 20px;color:#80503c;margin-top:23px}
+.faq {max-width:800px}
+details {border-bottom:1px solid #ebe7e9;padding:17px 3px}
+summary {cursor:pointer;font-weight:650;font-size:15px}
+details p {font-size:14px;color:var(--muted);margin:11px 0 1px}
+.footer {padding:28px 0 45px;border-top:1px solid #f0e8eb;color:#8b8a95;font-size:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.footer a {color:#46434f}
+@media(max-width:760px) {
+ .container {padding:0 20px}
+ nav {padding:18px 0}
+ .hero {padding:48px 0 58px;grid-template-columns:1fr;gap:45px}
+ h1 {letter-spacing:-1.5px;margin-top:19px}
+ .lead {font-size:15px}
+ .phone {width:260px;height:509px}
+ .aura {width:330px;height:330px}
+ .art {height:120px}
+ .feature-grid {grid-template-columns:1fr}
+ .steps {grid-template-columns:1fr}
+ .section {padding:55px 0}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn{transition:none}.phone{transform:none}}
+</style>
+</head>
+<body>
+<div class="container">
+<nav><a class="brand" href="#top"><span class="brand-mark">R</span> Red Web</a><a class="nav-link" href="https://github.com/jiojiojackson/red-web" rel="noopener">GitHub ↗</a></nav>
+<main>
+<section class="hero" id="top">
+<div>
+<span class="eyebrow"><span class="dot"></span> 开源 · Safari Userscript · v0.1</span>
+<h1>小红书网页版<br><em>更像 App。</em></h1>
+<p class="lead">在 iPhone Safari 中浏览小红书，用熟悉的双列卡片布局看推荐、打开笔记、查看评论和作者主页。无需搭建服务器，登录仍在官方网站进行。</p>
+<div class="cta"><a class="btn primary" href="#install">开始安装 <span aria-hidden="true">↗</span></a><a class="btn secondary" href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener">打开小红书官网</a></div>
+<p class="hint">仅作页面增强 · 不收集登录凭证 · 不提供「附近」「市场」入口</p>
+</div>
+<div class="mock-wrap" aria-label="Red Web 双列瀑布流外观示意图"><div class="aura"></div>
+<div class="phone"><div class="screen">
+<div class="dynamic"></div><div class="status"><span>9:41</span><span>●●● ▰</span></div>
+<div class="phone-head"><span>☰</span><span class="light">关注</span><strong>发现</strong><span>⌕</span></div>
+<div class="cards">
+<div class="mini-card"><div class="art art-a"></div><div class="mini-info"><div class="mini-title">用手机也能轻松浏览精彩内容</div><div class="mini-author"><span class="avatar"></span>发现灵感 · ♡ 825</div></div></div>
+<div class="mini-card"><div class="art art-b"></div><div class="mini-info"><div class="mini-title">桌面布置分享｜日常</div><div class="mini-author"><span class="avatar"></span>生活记录 · ♡ 362</div></div></div>
+<div class="mini-card"><div class="art art-c"></div><div class="mini-info"><div class="mini-title">今天看到的天空真的很漂亮</div><div class="mini-author"><span class="avatar"></span>随手拍 · ♡ 124</div></div></div>
+<div class="mini-card"><div class="art art-d"></div><div class="mini-info"><div class="mini-title">分享一个有趣的小发现</div><div class="mini-author"><span class="avatar"></span>笔记分享 · ♡ 68</div></div></div>
+</div><div class="phone-bottom"><span class="nav-item"><b>⌂</b>首页</span><span class="nav-item"><b>⌕</b>搜索</span><strong>+</strong><span class="nav-item"><b>♧</b>消息</span><span class="nav-item"><b>♙</b>我</span></div>
+</div></div></div>
+</section>
+<section class="section" id="features">
+<h2 class="section-head">先做好最常用的体验</h2>
+<p class="sub">脚本优先复用小红书网页的现有功能，减少复杂接口和额外的账号风险。</p>
+<div class="feature-grid">
+<div class="feature"><div class="feature-icon">▦</div><h3>双列瀑布流</h3><p>手机优先的推荐卡片布局，封面、标题、作者和点赞数尽可能保持原生。</p></div>
+<div class="feature"><div class="feature-icon">↧</div><h3>下拉刷新</h3><p>在推荐页顶部下拉，重新加载官方推荐流；也可轻触顶部刷新图标。</p></div>
+<div class="feature"><div class="feature-icon">♡</div><h3>笔记、评论、主页</h3><p>保留官网笔记交互；作者主页及评论能否访问，取决于官网实际开放能力。</p></div>
+</div>
+</section>
+</main></div>
+<section class="section steps-bg" id="install"><div class="container">
+<h2 class="section-head">iPhone Safari 安装指引</h2>
+<p class="sub">推荐使用免费的开源 Safari 扩展 <b>Userscripts</b>。安装脚本前，先启用该扩展。</p>
+<div class="steps">
+<div class="step"><span class="number">1</span><div><h3>安装 Safari 扩展</h3><p>从 <a href="https://apps.apple.com/jp/app/userscripts/id1463298887" target="_blank" rel="noopener">App Store 安装 Userscripts</a>，打开一次 App 完成初始化。</p></div></div>
+<div class="step"><span class="number">2</span><div><h3>允许 Safari 扩展</h3><p>在 iPhone「设置 → App → Safari → 扩展」启用 Userscripts，并允许它访问小红书网站。</p></div></div>
+<div class="step"><span class="number">3</span><div><h3>安装 Red Web 脚本</h3><p>在 Safari 中打开下面的 <code>.user.js</code> 地址，打开 Safari 的扩展菜单，选择 Userscripts 并确认安装。</p>
+<p style="margin-top:12px"><a class="btn primary" href="./red-web.user.js">打开安装脚本 ↗</a></p><p>如安装页未加载：<a href="https://raw.githubusercontent.com/jiojiojackson/red-web/main/red-web.user.js" target="_blank" rel="noopener">备用源地址</a>。</p></div></div>
+<div class="step"><span class="number">4</span><div><h3>访问官方小红书</h3><p>在 Safari 打开 <a href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener">xiaohongshu.com/explore</a>，按官网要求登录。如果移动网页限制功能，可以尝试 Safari「请求桌面网站」。</p></div></div>
+</div>
+<div class="notice"><b>首版说明：</b>这是基于官网 DOM 的早期实验版本，并非小红书官方应用。推荐、评论、登录、视频和用户主页仍受官方网页、登录状态及风控限制；不保证所有设备和账号都可正常使用。</div>
+</div></section>
+<div class="container">
+<section class="section faq"><h2 class="section-head">常见问题</h2>
+<details><summary>打开官网后没有变化？</summary><p>检查 Safari 的 Userscripts 扩展已启用且对小红书允许访问；确认脚本已激活。尝试请求桌面网站并刷新。若当前官网限制移动端页面，脚本无法强制开放被限制的功能。</p></details>
+<details><summary>怎样关闭或恢复官方原版？</summary><p>点击脚本页面左上角菜单 →「切换原版」。如按钮不可用，直接在 Userscripts 扩展中禁用 Red Web。重新开启时，可打开 <a href="https://www.xiaohongshu.com/explore?redweb=reset">恢复脚本链接</a>。</p></details>
+<details><summary>账号密码会上传到 GitHub 或开发者服务器吗？</summary><p>不会。脚本在小红书网站的浏览器页面内运行，不需要私有代理、自己的服务器或额外的账号凭证；本仓库也没有登录收集端点。小红书官网本身会按其政策处理账号数据。</p></details>
+<details><summary>可以放到 iPhone 主屏幕吗？</summary><p>Safari 的「共享 → 添加到主屏幕」可创建快捷方式。不过 iOS 独立网页 App 中是否运行 Safari Userscripts 扩展取决于系统支持；推荐直接在 Safari 中使用。</p></details>
+<details><summary>评论、视频、作者主页打不开怎么办？</summary><p>第一版采用官方页面原生交互。可能是官网页面更新、账号未登录、移动端限制或风控。请在 GitHub Issues 附上问题描述和截图（请隐藏个人信息）。</p></details>
+</section>
+<footer class="footer"><span>Red Web · 社区开源项目，与小红书官方无关联</span><span><a href="https://github.com/jiojiojackson/red-web">源代码</a> · <a href="https://github.com/jiojiojackson/red-web/issues">反馈问题</a> · <a href="./red-web.user.js">脚本直链</a></span></footer>
+</div>
+</body>
+</html>

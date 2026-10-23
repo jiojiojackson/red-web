@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.2.1
+// @version      0.2.2
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -22,7 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -804,13 +804,31 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
   function markMobilePromo() {
     const heading = popularHeading();
     if (!heading) return;
-    // Keep native images and note interactions. Only mark the header label itself.
     if (!heading.classList.contains('red-web-popular-heading')) {
       heading.classList.add('red-web-popular-heading');
       log('DOM', '检测到移动版热门笔记');
     }
-    // The large promotional hero above the heading is not the note feed.
-    // We deliberately do not delete it blindly: layout varies between logged-in accounts.
+    if ($('.red-web-promo-hidden')) return;
+    const headingTop = heading.getBoundingClientRect().top;
+    if (headingTop < 180) return;
+    // Only collapse a full-width hero clearly above "热门笔记", never note cards.
+    const likelyBanner = $$('img,video').find(media => {
+      if (media.closest('.note-item,.red-web-card,#red-web-debug-panel')) return false;
+      const rect = media.getBoundingClientRect();
+      return rect.width >= innerWidth * .72 && rect.height >= 145 &&
+        rect.top >= 55 && rect.bottom <= headingTop - 8;
+    });
+    if (!likelyBanner) return;
+    let candidate = likelyBanner;
+    for (let parent = likelyBanner.parentElement, i = 0; parent && i < 4; i++, parent = parent.parentElement) {
+      if (parent === document.body || parent === $('#app')) break;
+      const rect = parent.getBoundingClientRect();
+      if (rect.width < innerWidth * .7 || rect.height > 560 ||
+        rect.bottom > headingTop - 4 || rect.top < 45) break;
+      candidate = parent;
+    }
+    candidate.classList.add('red-web-promo-hidden');
+    log('DOM', '已折叠热门笔记上方的大幅媒体横幅');
   }
   function decorateFeed() {
     markMobilePromo();
@@ -852,6 +870,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
       currentView = view;
       lastPath = location.pathname;
       document.body.dataset.redView = view;
+      log('NAV', '页面类型变更为 ' + view + ', path=' + safeViewPath());
       drawBars(view);
     }
     if (view === 'feed') decorateFeed();
@@ -899,7 +918,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
       if (control) {
         event.preventDefault();
         event.stopPropagation();
-        onAction(control.dataset.redAction);
+        log('ACTION', control.dataset.redAction);
+        try { onAction(control.dataset.redAction); }
+        catch (error) { log('ERROR', '导航动作: ' + (error && error.message)); }
         return;
       }
       authorFallback(event);
@@ -936,12 +957,20 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     const observer = new MutationObserver(() => {
       if (pending) return;
       pending = true;
-      requestAnimationFrame(() => { pending = false; update(); });
+      requestAnimationFrame(() => {
+        pending = false;
+        try { update(); }
+        catch (error) { log('ERROR', 'DOM 更新: ' + (error && error.message)); }
+      });
     });
     observer.observe(document.body, { subtree: true, childList: true });
     window.addEventListener('popstate', update);
-    timer = setInterval(update, 1100);
-    update();
+    timer = setInterval(() => {
+      try { update(); }
+      catch (error) { log('ERROR', '定时检测: ' + (error && error.message)); }
+    }, 1700);
+    try { update(); }
+    catch (error) { log('ERROR', '首次检测: ' + (error && error.message)); }
     setTimeout(() => {
       if (pageView() !== 'feed') return;
       const count = selectNoteCards().length;

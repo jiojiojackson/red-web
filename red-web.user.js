@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.3.0
+// @version      0.3.1
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -22,7 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -812,6 +812,44 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         (el.textContent || '').trim() === '热门笔记' &&
         !el.closest('#red-web-top,#red-web-debug-panel'));
   }
+  // H5 mobile pages may render cards as clickable divs without any <a> href.
+  // Detect visually plausible note media without taking over the site's click handlers.
+  function visualNoteCandidates() {
+    const heading = popularHeading();
+    if (!heading || !heading.isConnected) return [];
+    const headingBox = heading.getBoundingClientRect();
+    const screenWidth = window.innerWidth || document.documentElement.clientWidth || 402;
+    const media = $$('img,video,[style*="background-image"]');
+    const found = [];
+    for (const element of media) {
+      if (element.closest('#red-web-top,#red-web-bottom,#red-web-debug-panel,#red-web-login-guide,#red-web-menu,.red-web-promo-hidden')) continue;
+      const r = element.getBoundingClientRect();
+      if (r.width < screenWidth * .22 || r.width > screenWidth * .70 ||
+          r.height < 75 || r.height > 1100 ||
+          r.top < headingBox.bottom - 8) continue;
+      let candidate = element;
+      let ancestor = element.parentElement;
+      for (let i = 0; ancestor && i < 6; i++, ancestor = ancestor.parentElement) {
+        if (ancestor === document.body || ancestor === $('#app')) break;
+        const box = ancestor.getBoundingClientRect();
+        if (box.width > screenWidth * .72 ||
+            box.width < r.width - 12 || box.height > 1250) break;
+        candidate = ancestor;
+        if (ancestor.matches('article,li,[class*="note"],[class*="card"],[class*="item"]') &&
+            ancestor.querySelector('img,video')) break;
+      }
+      // Parent may be a two-column grid; never select the full-width section.
+      const box = candidate.getBoundingClientRect();
+      if (box.width > screenWidth * .72) continue;
+      if (found.some(other => other === candidate || other.contains(candidate))) continue;
+      for (let i = found.length - 1; i >= 0; i--) {
+        if (candidate.contains(found[i])) found.splice(i, 1);
+      }
+      found.push(candidate);
+      if (found.length >= 80) break;
+    }
+    return found;
+  }
   function selectNoteCards() {
     const links = noteLinks();
     const native = $$('.note-item,[class*="note-card"],[class*="feed-card"]')
@@ -837,6 +875,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         cards.push(found);
       }
     }
+    // Fall back to geometry for the H5 mobile "热门笔记" cards with no anchors.
+    if (cards.length < 2) return visualNoteCandidates();
     return cards;
   }
   function findFeedContainer(cards) {
@@ -867,7 +907,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     const headingTop = heading.getBoundingClientRect().top;
     if (headingTop < 180) return;
     // Only collapse a full-width hero clearly above "热门笔记", never note cards.
-    const likelyBanner = $$('img,video').find(media => {
+    const likelyBanner = $$('img,video,[style*="background-image"]').find(media => {
       if (media.closest('.note-item,.red-web-card,#red-web-debug-panel')) return false;
       const rect = media.getBoundingClientRect();
       return rect.width >= innerWidth * .72 && rect.height >= 145 &&
@@ -888,7 +928,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function decorateFeed() {
     markMobilePromo();
     const cards = selectNoteCards();
-    const feed = findFeedContainer(cards);
+    // The H5 home is already a two-column grid. Reflow ONLY desktop note-item
+    // containers; forcing a second grid onto mobile cards breaks their layout.
+    const desktopCards = cards.filter(card => card.matches('.note-item'));
+    const feed = desktopCards.length >= 2 ? findFeedContainer(desktopCards) : null;
     if (feed && feed.dataset.redFeedRoot !== 'true') {
       $$('[data-red-feed-root="true"]').forEach(other => {
         if (other !== feed) {
@@ -897,7 +940,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         }
       });
       feed.dataset.redFeedRoot = 'true';
-      if (!cards[0].matches('.note-item')) feed.classList.add('red-web-mobile-grid');
+      feed.classList.remove('red-web-mobile-grid');
     }
     for (const card of cards) {
       if (card.dataset.redCard === '1') continue;
@@ -910,7 +953,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       }
     }
     const signature = cards.length + ' card(s), ' + noteLinks().length +
-      ' native link(s), heading=' + Boolean(popularHeading());
+      ' native link(s), heading=' + Boolean(popularHeading()) +
+      ', mobile-visual=' + visualNoteCandidates().length;
     if (signature !== lastFeedSignature) {
       lastFeedSignature = signature;
       log('DOM', signature + ', grid=' + Boolean(feed));

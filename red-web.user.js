@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.2.2
+// @version      0.2.3
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -22,7 +22,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.2.2';
+  const VERSION = '0.2.3';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -441,6 +441,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
         '<button type="button" data-rw-debug="scan">重新检测</button>' +
         '<button type="button" data-rw-debug="copy">复制报告</button>' +
         '<button type="button" data-rw-debug="login">尝试官网登录</button>' +
+        '<button type="button" data-rw-debug="resume">恢复脚本</button>' +
         '<button type="button" data-rw-debug="clear">清空日志</button></div>' +
         '<pre id="red-web-debug-data"></pre>' +
         '<p>报告不包含 Cookie、验证码、笔记内容或完整 URL；发送前仍请检查。</p>';
@@ -451,6 +452,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
         if (action === 'close') { debugVisible = false; renderDebug(); }
         if (action === 'scan') { log('SCAN', '手动重新识别页面'); update(); renderDebug(); }
         if (action === 'login') officialLogin();
+        if (action === 'resume') restoreRedWeb();
         if (action === 'clear') { debugLines = []; log('INFO', '日志已清空'); }
         if (action === 'copy') {
           const report = debugText();

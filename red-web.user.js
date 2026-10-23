@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.1.1
+// @version      0.1.2
 // @description  为小红书官网提供接近 App 的手机布局：双列笔记、下拉刷新、作者主页及原生评论
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -10,8 +10,8 @@
 // @grant        none
 // @noframes
 // @license      MIT
-// @downloadURL  https://jiojiojackson.github.io/red-web/red-web.user.js
-// @updateURL    https://jiojiojackson.github.io/red-web/red-web.user.js
+// @downloadURL  https://raw.githubusercontent.com/jiojiojackson/red-web/main/red-web.user.js
+// @updateURL    https://raw.githubusercontent.com/jiojiojackson/red-web/main/red-web.user.js
 // ==/UserScript==
 
 (function () {

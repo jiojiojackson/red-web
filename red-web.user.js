@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.4.2
+// @version      0.4.3
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -30,7 +30,7 @@
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.4.2';
+  const VERSION = '0.4.3';
   const DESKTOP_KEY = 'red-web-desktop-mode';
   const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15';
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -59,6 +59,10 @@
   const css = `
 :root { --red-web-accent: #ff2442; --red-web-top: 55px; --red-web-bottom: 65px; }
 html { overflow-x: hidden !important; }
+html:has(body.red-web[data-red-view="feed"]:not([data-red-login-open="true"])),
+body.red-web[data-red-view="feed"]:not([data-red-login-open="true"]) {
+  overscroll-behavior-y: none !important;
+}
 body.red-web {
   margin: 0 !important; min-width: 0 !important; max-width: 100vw !important;
   overflow-x: clip !important; background: #fff !important;
@@ -410,6 +414,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   let pullX = 0;
   let pullTarget = null;
   let pullDistance = 0;
+  let pullClaimed = false;
+  let pullBlocked = false;
   let authState = '';
   let refreshInProgress = false;
   let refreshBefore = '';
@@ -752,7 +758,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
           const task = GM.xmlHttpRequest(details);
           if (task && typeof task.then === 'function') task.then(resolve, reject);
         } else if (typeof GM_xmlhttpRequest === 'function') GM_xmlhttpRequest(details);
-        else reject(Error('请重新安装 v0.4.2 并加载脚本，以启用官网页面读取接口'));
+        else reject(Error('请重新安装 v0.4.3 并加载脚本，以启用官网页面读取接口'));
       } catch (error) { reject(error); }
     });
   }
@@ -932,9 +938,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       !el.closest('[id^="red-web-"],.note-item,.red-web-card,.note-detail-mask'));
   }
   function refresh() {
-    if (refreshInProgress || nativeLoginMode || loginDialog()) return;
+    if (refreshInProgress || nativeLoginMode || desktopLoading || pendingDesktopLogin ||
+      loginOpening || loginDialog()) return;
     if (pageView() !== 'feed') {
-      location.assign(homeUrl());
+      notify('请回到发现页再刷新推荐');
       return;
     }
     const recommend = $('#homefeed_recommend');
@@ -945,10 +952,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         notify('当前是热门笔记展示页，请切换官网桌面网站使用推荐刷新');
         showLoginGuide();
       } else {
-        notify('未找到官网刷新控件，正在打开官方推荐页');
-        const url = new URL(homeUrl());
-        url.searchParams.set('channel_id', 'homefeed_recommend');
-        location.assign(url.href);
+        notify('官网刷新控件尚未就绪，请稍后重试');
+        log('FEED', '未找到原生刷新控件，保留当前页面');
       }
       return;
     }
@@ -1300,10 +1305,58 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     pullStart = null;
     pullTarget = null;
     pullDistance = 0;
+    pullClaimed = false;
+    pullBlocked = false;
     const el = $('#red-web-pull');
     if (el) {
       el.style.transform = 'translate(-50%,-60px)';
       el.style.visibility = 'hidden';
+    }
+  }
+
+  function onPullStart(event) {
+    pullReset();
+    const own = event.target.closest('[id^="red-web-"]');
+    if (nativeLoginMode || loginDialog() || pageView() !== 'feed' ||
+      scrollTop(event.target) > 2 || event.touches.length !== 1 ||
+      event.target.closest('.note-detail-mask,input,textarea,select,[contenteditable],[role="dialog"]') ||
+      (own && !own.closest('#red-web-top,#red-web-bottom'))) return;
+    pullStart = event.touches[0].clientY;
+    pullX = event.touches[0].clientX;
+    pullTarget = event.target;
+    // A second pull while a request is pending must not become a Safari page reload.
+    pullBlocked = refreshInProgress;
+  }
+  function onPullMove(event) {
+    if (pullStart === null) return;
+    if (event.touches.length !== 1 || nativeLoginMode || loginDialog() ||
+      pageView() !== 'feed' || (!pullClaimed && scrollTop(pullTarget) > 2)) {
+      pullReset(); return;
+    }
+    const distance = event.touches[0].clientY - pullStart;
+    if (distance < 0 || (!pullClaimed &&
+      Math.abs(event.touches[0].clientX - pullX) > Math.abs(distance))) {
+      pullReset(); return;
+    }
+    if (distance === 0) return;
+    // Cancel the FIRST downward move, before Safari commits to native pull-to-reload.
+    // The 14px visual threshold must not delay ownership of the gesture.
+    if (!event.cancelable) {
+      log('FEED', '下拉手势已由浏览器接管，跳过重复推荐刷新');
+      pullReset(); return;
+    }
+    event.preventDefault();
+    pullClaimed = true;
+    pullDistance = pullBlocked ? 0 : Math.min(120, distance);
+    if (distance > 14) pullIndicator(pullBlocked ? '正在刷新推荐…' :
+      pullDistance >= 85 ? '松开刷新推荐' : '下拉刷新推荐', Math.min(120, distance) * .72);
+  }
+  function onPullEnd() {
+    const ready = pullClaimed && !pullBlocked && pullDistance >= 85;
+    pullReset();
+    if (ready) {
+      log('FEED', '已接管顶部下拉手势，刷新当前推荐');
+      refresh();
     }
   }
 
@@ -1312,6 +1365,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     if (bodyObserver) bodyObserver.disconnect();
     clearInterval(timer);
     clearTimeout(feedCheckTimeout);
+    pullReset();
     bootBody = null;
     runtimeGeneration++;
   }
@@ -1351,42 +1405,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
       authorFallback(event);
     }, { capture: true, signal });
 
-    document.addEventListener('touchstart', event => {
-      if (nativeLoginMode || refreshInProgress || loginDialog() || pageView() !== 'feed' ||
-        scrollTop(event.target) > 2 || event.touches.length !== 1 ||
-        event.target.closest('[id^="red-web-"],.note-detail-mask,input,textarea,[contenteditable]')) {
-        pullReset(); return;
-      }
-      pullStart = event.touches[0].clientY;
-      pullX = event.touches[0].clientX;
-      pullTarget = event.target;
-      pullDistance = 0;
-    }, { passive: true, signal });
-
-    document.addEventListener('touchmove', event => {
-      if (pullStart === null) return;
-      if (event.touches.length !== 1 || pageView() !== 'feed' || scrollTop(pullTarget) > 2) {
-        pullReset(); return;
-      }
-      const distance = event.touches[0].clientY - pullStart;
-      if (Math.abs(event.touches[0].clientX - pullX) > Math.abs(distance)) {
-        pullReset(); return;
-      }
-      if (distance < 0) { pullDistance = 0; return; }
-      pullDistance = Math.min(120, distance);
-      if (pullDistance > 14) {
-        if (event.cancelable) event.preventDefault();
-        pullIndicator(pullDistance >= 85 ? '松开刷新推荐' : '下拉刷新推荐',
-          pullDistance * .72);
-      }
-    }, { passive: false, signal });
-
-    document.addEventListener('touchend', () => {
-      const ready = pullStart !== null && pullDistance >= 85;
-      pullReset();
-      if (ready) refresh();
-    }, { passive: true, signal });
-    document.addEventListener('touchcancel', pullReset, { passive: true, signal });
+    document.addEventListener('touchstart', onPullStart, { capture: true, passive: true, signal });
+    document.addEventListener('touchmove', onPullMove, { capture: true, passive: false, signal });
+    document.addEventListener('touchend', onPullEnd, { capture: true, passive: true, signal });
+    document.addEventListener('touchcancel', pullReset, { capture: true, passive: true, signal });
 
     let pending = false;
     bodyObserver = new MutationObserver(() => {

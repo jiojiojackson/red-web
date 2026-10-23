@@ -103,7 +103,7 @@ details p {font-size:14px;color:var(--muted);margin:11px 0 1px}
 <main>
 <section class="hero" id="top">
 <div>
-<span class="eyebrow"><span class="dot"></span> 开源 · Safari Userscript · v0.4.2 调试版</span>
+<span class="eyebrow"><span class="dot"></span> 开源 · Safari Userscript · v0.4.3 调试版</span>
 <h1>小红书网页版<br><em>更像 App。</em></h1>
 <p class="lead">在 iPhone Safari 中浏览小红书，用熟悉的双列卡片布局看推荐、打开笔记、查看评论和作者主页。无需搭建服务器，登录仍在官方网站进行。</p>
 <div class="cta"><a class="btn primary" href="#install">开始安装 <span aria-hidden="true">↗</span></a><a class="btn secondary" href="https://www.rednote.com/" target="_blank" rel="noopener">打开 rednote 官网</a></div>
@@ -141,13 +141,13 @@ details p {font-size:14px;color:var(--muted);margin:11px 0 1px}
 <p style="margin-top:12px"><a class="btn primary" href="./red-web.user.js">打开安装脚本 ↗</a></p><p>如安装页未加载：<a href="https://raw.githubusercontent.com/jiojiojackson/red-web/main/red-web.user.js" target="_blank" rel="noopener">备用源地址</a>。</p></div></div>
 <div class="step"><span class="number">4</span><div><h3>访问官方小红书</h3><p>在 Safari 打开 <a href="https://www.rednote.com/" target="_blank" rel="noopener">rednote.com</a> 或 <a href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener">xiaohongshu.com/explore</a>，点击顶部右侧或底部「登录」。两个域名与不同设备的登录状态需分别确认；若只出现「热门笔记」，可请求桌面网站。</p></div></div>
 </div>
-<div class="notice"><b>v0.4.2 调试版：</b>顶部和底部直接提供登录入口，登录后自动切换为「我」；手机没有原生登录入口时直接加载同站电脑版，准备期间避免重复载入；返回首页优先使用官网内部导航。刷新使用官网原生控件。同时支持 rednote.com，请在 Userscripts 中替换旧脚本并允许当前域名访问。已通过 Node 回归及手机宽度模拟检查；真实 iPhone Safari 仍需在设备上确认。</div>
+<div class="notice"><b>v0.4.3 调试版：</b>顶部和底部直接提供登录入口，登录后自动切换为「我」；手机没有原生登录入口时直接加载同站电脑版，准备期间避免重复载入；返回首页优先使用官网内部导航。刷新从手指首次下移就阻止浏览器整页重载，加载期间再次下拉和导航栏下拉也会拦截；刷新控件缺失时保留当前页面。同时支持 rednote.com，请在 Userscripts 中替换旧脚本并允许当前域名访问。已通过 Node 回归及手机宽度模拟检查；真实 iPhone Safari 仍需在设备上确认。</div>
 </div></section>
 <div class="container">
 <section class="section faq"><h2 class="section-head">常见问题</h2>
-<details><summary>怎么查看错误和复制报告？</summary><p>安装 v0.4.2 并打开小红书官网后，点右下角半透明「调试」按钮。可以查看原生笔记链接数量、视觉卡片识别情况、匿名媒体尺寸、官网登录入口数量及页面异常。点击「复制报告」后发送至 GitHub Issues。报告不自动上传；发送前请再次检查是否含敏感信息。</p></details>
+<details><summary>怎么查看错误和复制报告？</summary><p>安装 v0.4.3 并打开小红书官网后，点右下角半透明「调试」按钮。可以查看原生笔记链接数量、视觉卡片识别情况、匿名媒体尺寸、官网登录入口数量及页面异常。点击「复制报告」后发送至 GitHub Issues。报告不自动上传；发送前请再次检查是否含敏感信息。</p></details>
 <details><summary>登录为什么仍然打不开？</summary><p>先点顶部右侧或底部「登录」，脚本会点击官网原生按钮；登录后自动显示「我」。手机页没有原生入口时，新版会直接读取官网电脑版页面并等待登录入口就绪，请勿重复刷新。若扩展未能返回电脑版页面，再尝试 Safari「请求桌面网站」。电脑 Chrome 的登录不会自动同步到手机 Safari，两个官网域名的登录状态也需分别确认。</p></details>
-<details><summary>为什么刷新后没有新帖子？</summary><p>新版会触发官网的原生刷新控件；加载期间按钮暂时禁用，只有收到新笔记才提示更新，12 秒无新内容会恢复按钮。若当前是固定的「热门笔记」手机展示页，请请求桌面网站或使用 rednote 官网，再确认登录。</p></details>
+<details><summary>为什么刷新后没有新帖子？</summary><p>新版会接管顶部下拉手势并触发官网原生刷新；加载期间再次下拉不会触发浏览器整页刷新，刷新控件未就绪时保留当前页。加载期间按钮暂时禁用，只有收到新笔记才提示更新，12 秒无新内容会恢复按钮。若当前是固定的「热门笔记」手机展示页，请请求桌面网站或使用 rednote 官网，再确认登录。</p></details>
 <details><summary>打开官网后没有变化？</summary><p>检查 Safari 的 Userscripts 扩展已启用且对当前小红书或 rednote 域名允许访问；确认脚本已激活。尝试请求桌面网站并刷新。若当前官网限制移动端页面，脚本无法强制开放被限制的功能。</p></details>
 <details><summary>怎样关闭或恢复官方原版？</summary><p>点击脚本页面左上角菜单 →「切换原版」。如按钮不可用，直接在 Userscripts 扩展中禁用 Red Web。重新开启时，可打开 <a href="https://www.xiaohongshu.com/explore?redweb=reset">恢复脚本链接</a>。</p></details>
 <details><summary>账号密码会上传到 GitHub 或开发者服务器吗？</summary><p>不会。脚本在小红书网站的浏览器页面内运行，不需要私有代理、自己的服务器或额外的账号凭证；本仓库也没有登录收集端点。小红书官网本身会按其政策处理账号数据。</p></details>

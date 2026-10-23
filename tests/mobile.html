@@ -89,9 +89,9 @@ function check(ok, text) {
   if (!ok) throw Error(text);
   results.textContent += '✓ ' + text + '\n';
 }
-function touch(target, type, x, y) {
-  const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
+function touch(target, type, x, y, cancelable = true) {
+  const event = new Event(type, { bubbles: true, cancelable });
+  Object.defineProperty(event, 'touches', { value: ['touchend', 'touchcancel'].includes(type) ? [] : [{ clientX: x, clientY: y }] });
   target.dispatchEvent(event);
   return event;
 }
@@ -116,6 +116,12 @@ document.querySelector('#fixture-run').onclick = async () => {
     refresh().click(); refresh().click();
     await new Promise(resolve => setTimeout(resolve, 80));
     check(refreshCount === 1 && refresh().disabled, '调用原生刷新并阻止重复请求，删除旧卡片不误报成功');
+    touch(feed, 'touchstart', 100, 0);
+    const busyFirst = touch(feed, 'touchmove', 100, 3);
+    const busyMove = touch(feed, 'touchmove', 100, 100);
+    touch(feed, 'touchend', 100, 100);
+    check(busyFirst.defaultPrevented && busyMove.defaultPrevented && refreshCount === 1,
+      '推荐加载期间再次下拉，仍拦截浏览器刷新且不重复请求');
     await waitFor(() => batch === 2 && !refresh().disabled);
     check(document.querySelector('#red-web-toast').textContent === '推荐已更新', '新推荐到达后恢复按钮并提示成功');
     window.scrollTo(0, 0);
@@ -128,10 +134,32 @@ document.querySelector('#fixture-run').onclick = async () => {
     touch(nested, 'touchstart', 100, 0); touch(nested, 'touchmove', 100, 100); touch(nested, 'touchend', 100, 100);
     check(refreshCount === 1, '内层滚动未到顶时不触发刷新');
     nested.remove();
-    touch(feed, 'touchstart', 100, 0); const move = touch(feed, 'touchmove', 100, 100); touch(feed, 'touchend', 100, 100);
-    check(refreshCount === 2 && move.defaultPrevented, '从屏幕 y=0 下拉也能刷新，并抑制重复的浏览器下拉');
+    touch(feed, 'touchstart', 100, 0);
+    const first = touch(feed, 'touchmove', 100, 3);
+    const move = touch(feed, 'touchmove', 100, 100, first.defaultPrevented);
+    touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 2 && first.defaultPrevented && move.defaultPrevented,
+      '首个 3px 移动就接管下拉，避免浏览器和推荐同时刷新');
     await waitFor(() => batch === 3 && !refresh().disabled);
     check(getComputedStyle(document.querySelector('#red-web-pull')).visibility === 'hidden', '下拉结束后收起刷新提示');
+    const bar = document.querySelector('#red-web-top');
+    touch(bar, 'touchstart', 100, 10);
+    const barMove = touch(bar, 'touchmove', 100, 110); touch(bar, 'touchend', 100, 110);
+    check(refreshCount === 3 && barMove.defaultPrevented, '顶部导航栏开始下拉也不会漏给浏览器刷新');
+    await waitFor(() => batch === 4 && !refresh().disabled);
+    touch(feed, 'touchstart', 100, 0);
+    const short = touch(feed, 'touchmove', 100, 30); touch(feed, 'touchend', 100, 30);
+    check(short.defaultPrevented && refreshCount === 3, '短下拉拦截浏览器刷新，但不请求推荐');
+    touch(feed, 'touchstart', 100, 0); touch(feed, 'touchmove', 100, 100);
+    touch(feed, 'touchcancel', 100, 100); touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 3, '系统取消手势后不误刷新');
+    touch(feed, 'touchstart', 100, 0); touch(feed, 'touchmove', 100, 100, false);
+    touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 3, '浏览器已接管的手势不再叠加推荐刷新');
+    document.querySelector('.reload').remove();
+    refresh().click();
+    check(document.querySelector('#red-web-toast').textContent.includes('稍后重试'),
+      '刷新控件缺失时保留当前页面，不跳回手机官网');
     results.textContent += '全部浏览器回归通过';
   } catch (error) { results.textContent += '✗ ' + error.message; }
 };

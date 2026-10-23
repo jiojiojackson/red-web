@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.2');
+  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.3');
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -158,7 +158,7 @@ test('missing extension request API fails with an actionable update message', as
     section('requestDesktopPage(url)', 'loadDesktopLogin(') +
     '\nreturn requestDesktopPage;'
   )(undefined, undefined, 'Desktop Safari');
-  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.2/);
+  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.3/);
 });
 
 test('diagnostics expose no media URLs and preserve H5 native grid', () => {
@@ -292,16 +292,18 @@ test('returning from profile uses official SPA navigation without a full reload'
 });
 
 test('runtime starts once per document body and disposes old listeners and timers', () => {
-  const intervals = new Set(), timeouts = new Set(), signals = [];
+  const intervals = new Set(), timeouts = new Set(), signals = [], listeners = [];
   let nextId = 0, boots = 0, disconnects = 0;
   const document = { body: { classList: { add() {} } }, addEventListener(type, callback, options) {
     if (type === 'click') signals.push(options.signal);
+    listeners.push({ type, options });
   } };
   const context = {
     document, window: { addEventListener() {} }, AbortController,
     sessionStorage: { getItem: () => null }, DESKTOP_KEY: 'test', VERSION: 'test',
     $: () => ({ setAttribute() {} }), addCss() {}, debugControl() {}, safeViewPath: () => '/',
     log(kind) { if (kind === 'BOOT') boots++; }, update() {}, pullReset() {},
+    onPullStart() {}, onPullMove() {}, onPullEnd() {},
     MutationObserver: class { observe() {} disconnect() { disconnects++; } },
     setInterval() { const id = ++nextId; intervals.add(id); return id; },
     clearInterval: id => intervals.delete(id),
@@ -325,9 +327,12 @@ test('runtime starts once per document body and disposes old listeners and timer
   assert.equal(intervals.size, 1);
   assert.equal(timeouts.size, 1);
   assert.equal(disconnects, 1);
+  const move = listeners.find(listener => listener.type === 'touchmove');
+  assert.equal(move.options.capture, true);
+  assert.equal(move.options.passive, false);
 });
 
-function refreshHarness({ native = true, hot = false, dialog = false, inactiveChannel = false } = {}) {
+function refreshHarness({ native = true, hot = false, dialog = false, inactiveChannel = false, view = 'feed' } = {}) {
   let clicks = 0, channelClicks = 0, guides = 0;
   const messages = [], navigations = [], timers = new Map();
   const ui = { disabled: false, setAttribute() {} };
@@ -339,13 +344,14 @@ function refreshHarness({ native = true, hot = false, dialog = false, inactiveCh
   const api = new Function('$', '$$', 'noteLinks', 'location', 'window', 'pageView', 'loginDialog',
     'homeUrl', 'popularHeading', 'showLoginGuide', 'notify', 'log', 'setTimeout', 'clearTimeout',
     'let refreshInProgress = false, nativeLoginMode = false, refreshBefore = "", refreshTimeout;\n' +
+    'const desktopLoading = false, pendingDesktopLogin = false, loginOpening = false;\n' +
     section('feedFingerprint()', 'back()') +
     '\nreturn { refresh, finishRefresh, feedFingerprint };'
   )(() => inactiveChannel ? recommend : null,
     selector => selector.startsWith('.reload') ? (native ? [nativeControl] : []) :
       selector.startsWith('[data-red-action') ? [ui] : [],
     () => hot ? [] : [{ href: location.origin + '/discovery/item/old?xsec_token=do-not-record' }],
-    location, { scrollTo() {} }, () => 'feed', () => dialog,
+    location, { scrollTo() {} }, () => view, () => dialog,
     () => location.origin + '/', () => hot, () => { guides++; },
     text => messages.push(text), () => {}, callback => { timers.set(1, callback); return 1; },
     id => timers.delete(id));
@@ -374,14 +380,20 @@ test('refresh returns to recommended channel before refreshing a category', () =
   assert.equal(h.counts().clicks, 0);
 });
 
-test('static H5 hot notes show help, while missing desktop controls use same-site navigation', () => {
+test('missing refresh controls preserve the current desktop document instead of navigating', () => {
   const hot = refreshHarness({ native: false, hot: true });
   hot.refresh();
   assert.equal(hot.counts().guides, 1);
   assert.equal(hot.navigations.length, 0);
   const desktop = refreshHarness({ native: false });
   desktop.refresh();
-  assert.deepEqual(desktop.navigations, ['https://www.rednote.com/?channel_id=homefeed_recommend']);
+  assert.deepEqual(desktop.navigations, []);
+  assert.match(desktop.messages.at(-1), /稍后重试/);
+  assert.equal(desktop.timers.size, 0);
+  const profile = refreshHarness({ view: 'profile' });
+  profile.refresh();
+  assert.deepEqual(profile.navigations, []);
+  assert.equal(profile.counts().clicks, 0);
 });
 
 test('refresh never interferes with an open official login dialog', () => {
@@ -400,6 +412,104 @@ test('pull-to-refresh respects a nested scroller position', () => {
   assert.equal(getTop({ parentElement: scroller }), 150);
   scroller.scrollTop = 0;
   assert.equal(getTop({ parentElement: scroller }), 0);
+});
+
+function pullHarness() {
+  let refreshes = 0;
+  const indicator = { style: {} }, messages = [];
+  const state = { top: 0, dialog: false, view: 'feed' };
+  const api = runInNewContext(`
+    let pullStart = null, pullTarget = null, pullDistance = 0, pullX = 0;
+    let pullClaimed = false, pullBlocked = false, refreshInProgress = false, nativeLoginMode = false;
+    ${section('pullReset()', 'stopRuntime()')}
+    ({ start: onPullStart, move: onPullMove, end: onPullEnd, cancel: pullReset,
+       busy(value) { refreshInProgress = value; } });
+  `, {
+    $: () => indicator, loginDialog: () => state.dialog, pageView: () => state.view,
+    scrollTop: () => state.top, refresh: () => refreshes++,
+    pullIndicator: text => messages.push(text), log() {}
+  });
+  function target(kind = 'feed') {
+    const own = { closest: () => kind === 'bar' ? own : null };
+    return { closest(selector) {
+      if (selector === '[id^="red-web-"]') return ['bar', 'debug'].includes(kind) ? own : null;
+      return kind === 'input' ? {} : null;
+    } };
+  }
+  function event(y, { x = 100, cancelable = true, kind = 'feed', fingers = 1 } = {}) {
+    return { target: target(kind), touches: Array.from({ length: fingers }, () => ({ clientX: x, clientY: y })),
+      cancelable, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+  }
+  return { ...api, event, state, indicator, messages, refreshes: () => refreshes };
+}
+
+test('the first tiny downward move is canceled before Safari can commit to page reload', () => {
+  const h = pullHarness();
+  h.start(h.event(0));
+  // Safari may make subsequent moves noncancelable if the first one was allowed.
+  const first = h.event(3);
+  h.move(first);
+  assert.equal(first.defaultPrevented, true);
+  assert.equal(h.messages.length, 0, 'visual threshold must not delay cancellation');
+  const next = h.event(100, { cancelable: first.defaultPrevented });
+  h.move(next); h.end();
+  assert.equal(next.defaultPrevented, true);
+  assert.equal(h.refreshes(), 1);
+  assert.equal(h.indicator.style.visibility, 'hidden');
+});
+
+test('pulling while recommendations load blocks browser reload without a second refresh', () => {
+  const h = pullHarness();
+  h.busy(true); h.start(h.event(100));
+  const first = h.event(104); h.move(first);
+  h.busy(false); // A pending request can finish while the finger is still down.
+  const next = h.event(210); h.move(next); h.end();
+  assert.equal(first.defaultPrevented && next.defaultPrevented, true);
+  assert.equal(h.refreshes(), 0);
+  h.start(h.event(100)); h.move(h.event(200)); h.end();
+  assert.equal(h.refreshes(), 1);
+});
+
+test('pulls from navigation bars are handled, while debug and form controls stay interactive', () => {
+  for (const kind of ['bar', 'debug', 'input']) {
+    const h = pullHarness();
+    h.start(h.event(100, { kind }));
+    const move = h.event(200, { kind }); h.move(move); h.end();
+    assert.equal(move.defaultPrevented, kind === 'bar', kind);
+    assert.equal(h.refreshes(), kind === 'bar' ? 1 : 0, kind);
+  }
+});
+
+test('horizontal and upward gestures cannot later turn into an accidental refresh', () => {
+  for (const first of [{ y: 110, x: 160 }, { y: 90, x: 100 }]) {
+    const h = pullHarness();
+    h.start(h.event(100));
+    const move = h.event(first.y, { x: first.x }); h.move(move);
+    const reversed = h.event(250); h.move(reversed); h.end();
+    assert.equal(move.defaultPrevented || reversed.defaultPrevented, false);
+    assert.equal(h.refreshes(), 0);
+  }
+});
+
+test('browser-owned, short, canceled and multi-touch pulls never request recommendations', () => {
+  for (const kind of ['browser', 'short', 'cancel', 'multi']) {
+    const h = pullHarness();
+    h.start(h.event(0));
+    h.move(h.event(kind === 'short' ? 30 : 100, { cancelable: kind !== 'browser', fingers: kind === 'multi' ? 2 : 1 }));
+    if (kind === 'cancel') h.cancel();
+    h.end();
+    assert.equal(h.refreshes(), 0, kind);
+  }
+});
+
+test('scrolled feeds, login dialogs and other views retain their normal touch behavior', () => {
+  for (const state of [{ top: 100 }, { dialog: true }, { view: 'profile' }]) {
+    const h = pullHarness(); Object.assign(h.state, state);
+    h.start(h.event(100));
+    const move = h.event(220); h.move(move); h.end();
+    assert.equal(move.defaultPrevented, false);
+    assert.equal(h.refreshes(), 0);
+  }
 });
 
 test('mobile bars expose login immediately, then update when account navigation appears', () => {

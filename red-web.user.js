@@ -562,10 +562,44 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     return $$('a[href]').find(a => a.href.includes(fragment) &&
       !a.closest('.note-item,.note-detail-mask,#red-web-top,#red-web-bottom'));
   }
+  let nativeLoginMode = false;
+  function restoreRedWeb() {
+    nativeLoginMode = false;
+    document.body.classList.add('red-web');
+    document.body.dataset.redLoginOpen = 'false';
+    const top = $('#red-web-top');
+    const bottom = $('#red-web-bottom');
+    if (top) top.hidden = false;
+    if (bottom) bottom.hidden = false;
+    log('AUTH', '恢复脚本界面');
+    update();
+  }
   function officialLogin() {
-    const btn = findNative('登录', ['.header-container','.side-bar','body']);
-    if (btn) btn.click();
-    else location.assign('https://www.xiaohongshu.com/login?redirectPath=%2Fexplore');
+    const candidates = loginElements();
+    const entry = candidates.find(isVisible) || candidates[0];
+    log('AUTH', '请求官网登录，原生入口数=' + candidates.length);
+    // The first-party website owns authentication. The script must not guess a /login URL:
+    // its previously hardcoded URL is a Xiaohongshu 404.
+    nativeLoginMode = true;
+    document.body.classList.remove('red-web');
+    document.body.dataset.redLoginOpen = 'true';
+    const top = $('#red-web-top');
+    const bottom = $('#red-web-bottom');
+    if (top) top.hidden = true;
+    if (bottom) bottom.hidden = true;
+    $('#red-web-menu')?.remove();
+    if (entry) {
+      setTimeout(() => {
+        try {
+          entry.click();
+          log('AUTH', '已点击官网原生登录入口；请检查是否出现官方弹窗');
+        } catch (error) { log('ERROR', '官网登录入口点击失败: ' + (error && error.message)); }
+      }, 80);
+      notify('已切换官方界面，尝试打开官网登录');
+    } else {
+      log('WARN', '官网当前页面未找到登录按钮；不再跳转不存在的 /login 页面');
+      notify('已切换官方原版，请使用官网登录按钮；没有按钮可尝试 Safari 请求桌面网站');
+    }
   }
   function showDialog(kind) {
     const id = kind === 'search' ? 'red-web-search' : 'red-web-menu';
@@ -583,6 +617,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
         '<h3>Red Web</h3><p style="font-size:13px;line-height:1.65;color:#555">' +
         '脚本只修改界面；登录、帖子和评论仍由小红书官网提供。</p>' +
         '<div class="red-web-actions"><button type="button" data-red-close>返回</button>' +
+        '<button type="button" data-red-action="login">官网登录</button>' +
         '<button type="button" class="primary" data-red-action="disable">切换原版</button></div></div>';
     }
     mask.addEventListener('click', event => {
@@ -649,6 +684,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
       case 'following': follow(); break;
       case 'back': back(); break;
       case 'profile': profile(); break;
+      case 'login': officialLogin(); break;
+      case 'resume': restoreRedWeb(); break;
       case 'messages': messages(); break;
       case 'publish':
         location.assign('https://creator.xiaohongshu.com/publish/publish?source=official');
@@ -681,9 +718,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
   function authorFallback(event) {
     if (event.defaultPrevented || event.button !== 0 ||
       event.metaKey || event.ctrlKey || event.shiftKey) return;
-    const author = event.target.closest('.note-item .author-wrapper');
+    const author = event.target.closest('.note-item .author-wrapper, .red-web-card .author-wrapper');
     if (!author || event.target.closest('a[href],button')) return;
-    const card = author.closest('.note-item');
+    const card = author.closest('.note-item,.red-web-card');
     const link = card && $('a[href*="/explore/"]', card);
     if (!link) return; // Keep native click behavior if the site changes.
     let noteId;
@@ -700,40 +737,115 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     location.assign(url.href);
   }
 
-  function findFeedContainer(card) {
-    let current = card && card.parentElement;
-    for (let i = 0; current && i < 5; i++, current = current.parentElement) {
-      if ($$('.note-item', current).length >= 3 &&
-        Array.from(current.children).filter(c => c.matches && c.matches('.note-item')).length >= 2) {
-        return current;
+  // Xiaohongshu uses different HTML for desktop explore and the mobile hot-notes page.
+  // Use real native note links first, and never infer/forge signed note URLs.
+  function noteLinks() {
+    return $('a[href*="/explore/"],a[href*="/discovery/item/"]')
+      .filter(a => {
+        if (a.closest('#red-web-top,#red-web-bottom,#red-web-debug-panel,#red-web-menu,#red-web-search')) return false;
+        try {
+          const url = new URL(a.href, location.href);
+          return (url.hostname === 'www.xiaohongshu.com' ||
+            url.hostname === 'xiaohongshu.com') &&
+            /^\/(?:explore|discovery\/item)\/[^/]+/.test(url.pathname);
+        } catch (_) { return false; }
+      });
+  }
+  function popularHeading() {
+    return $('h1,h2,h3,h4,div,span,p')
+      .find(el => el.childElementCount <= 2 &&
+        (el.textContent || '').trim() === '热门笔记' &&
+        !el.closest('#red-web-top,#red-web-debug-panel'));
+  }
+  function selectNoteCards() {
+    const native = $('.note-item,[class*="note-card"],[class*="feed-card"]')
+      .filter(el => !el.closest('#red-web-debug-panel,#red-web-top,#red-web-bottom') &&
+        $('img,video,[style*="background-image"]', el) &&
+        (noteLinks().some(a => el.contains(a)) || el.matches('.note-item')));
+    if (native.length >= 2) return native.filter(el => !native.some(parent =>
+      parent !== el && parent.contains(el)));
+    const cards = [];
+    for (const link of noteLinks()) {
+      let cursor = link, found = link;
+      for (let depth = 0; cursor && depth < 6; depth++, cursor = cursor.parentElement) {
+        if (!cursor || cursor === document.body) break;
+        // Stop at grids and sections with multiple different notes.
+        const matching = $('a[href*="/explore/"],a[href*="/discovery/item/"]', cursor);
+        if (matching.length > 2) break;
+        if ($('img,video', cursor) && (cursor.textContent || '').trim().length >= 2) {
+          found = cursor;
+          if (cursor.matches('article,li,section,[class*="card"],[class*="item"]')) break;
+        }
+      }
+      if (!cards.some(card => card === found || card.contains(found))) {
+        cards.push(found);
       }
     }
-    return null;
+    return cards;
+  }
+  function findFeedContainer(cards) {
+    if (cards.length < 2) return null;
+    const buckets = new Map();
+    for (const card of cards) {
+      const parent = card.parentElement;
+      if (!parent) continue;
+      if (!buckets.has(parent)) buckets.set(parent, []);
+      buckets.get(parent).push(card);
+    }
+    const best = Array.from(buckets).sort((a,b) => b[1].length - a[1].length)[0];
+    if (!best || best[1].length < 2) return null;
+    const [parent, members] = best;
+    // Don't change site-owned mixed-content sections, navigation, or two-column wrappers.
+    const direct = Array.from(parent.children).filter(x => members.includes(x));
+    if (direct.length < 2 || direct.length < parent.children.length - 2) return null;
+    return parent;
+  }
+  function markMobilePromo() {
+    const heading = popularHeading();
+    if (!heading) return;
+    // Keep native images and note interactions. Only mark the header label itself.
+    if (!heading.classList.contains('red-web-popular-heading')) {
+      heading.classList.add('red-web-popular-heading');
+      log('DOM', '检测到移动版热门笔记');
+    }
+    // The large promotional hero above the heading is not the note feed.
+    // We deliberately do not delete it blindly: layout varies between logged-in accounts.
   }
   function decorateFeed() {
-    const cards = $$('.note-item');
-    if (!cards.length) return;
-    const feed = findFeedContainer(cards[0]);
-    if (!feed) return;
-    if (feed.dataset.redFeedRoot !== 'true') {
-      $$('[data-red-feed-root="true"]').forEach(other => {
-        if (other !== feed) delete other.dataset.redFeedRoot;
+    markMobilePromo();
+    const cards = selectNoteCards();
+    const feed = findFeedContainer(cards);
+    if (feed && feed.dataset.redFeedRoot !== 'true') {
+      $('[data-red-feed-root="true"]').forEach(other => {
+        if (other !== feed) {
+          delete other.dataset.redFeedRoot;
+          other.classList.remove('red-web-mobile-grid');
+        }
       });
       feed.dataset.redFeedRoot = 'true';
+      if (!cards[0].matches('.note-item')) feed.classList.add('red-web-mobile-grid');
     }
-    cards.forEach(card => {
-      if (card.dataset.redCard === '1') return;
+    for (const card of cards) {
+      if (card.dataset.redCard === '1') continue;
       card.dataset.redCard = '1';
+      if (!card.classList.contains('note-item')) card.classList.add('red-web-card');
       const author = $('.author-wrapper', card);
       if (author) {
         author.style.cursor = 'pointer';
         author.setAttribute('aria-label', '查看作者主页');
       }
-    });
+    }
+    const signature = cards.length + ' card(s), ' + noteLinks().length +
+      ' native link(s), heading=' + Boolean(popularHeading());
+    if (signature !== lastFeedSignature) {
+      lastFeedSignature = signature;
+      log('DOM', signature + ', grid=' + Boolean(feed));
+    }
   }
 
   function update() {
     if (!document.body) return;
+    if (nativeLoginMode) return;
     const view = pageView();
     if (view !== currentView || location.pathname !== lastPath) {
       currentView = view;
@@ -741,7 +853,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
       document.body.dataset.redView = view;
       drawBars(view);
     }
-    if (view === 'feed' || view === 'profile' || view === 'search') decorateFeed();
+    if (view === 'feed') decorateFeed();
   }
 
   function scrollTop() {
@@ -770,6 +882,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     if (!document.body) return;
     addCss();
     document.body.classList.add('red-web');
+    log('BOOT', 'Red Web v' + VERSION + ' 已启动；路径 ' + safeViewPath());
+    debugControl();
     const vp = $('meta[name="viewport"]');
     if (vp) vp.setAttribute('content', 'width=device-width,initial-scale=1,viewport-fit=cover');
     else {
@@ -828,8 +942,10 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { display: none !imp
     timer = setInterval(update, 1100);
     update();
     setTimeout(() => {
-      if (pageView() === 'feed' && !$$('.note-item').length)
-        notify('推荐内容未出现：请先在小红书官网登录，必要时在 Safari 请求桌面网站');
+      if (pageView() !== 'feed') return;
+      const count = selectNoteCards().length;
+      log('CHECK', '延迟检测：笔记卡片=' + count + '，原生链接=' + noteLinks().length);
+      if (!count) notify('未识别到笔记卡片，请点右下角「调试」复制报告');
     }, 9000);
   }
 

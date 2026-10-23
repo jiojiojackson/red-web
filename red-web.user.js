@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Red Web - 小红书移动网页优化
 // @namespace    https://github.com/jiojiojackson/red-web
-// @version      0.4.0
+// @version      0.4.1
 // @description  小红书手机网页优化：双列笔记、官网登录、评论主页及隐私安全调试面板
 // @author       jiojiojackson
 // @match        https://www.xiaohongshu.com/*
@@ -9,7 +9,13 @@
 // @match        https://www.rednote.com/*
 // @match        https://rednote.com/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM.xmlHttpRequest
+// @grant        GM_xmlhttpRequest
+// @inject-into  content
+// @connect      www.rednote.com
+// @connect      rednote.com
+// @connect      www.xiaohongshu.com
+// @connect      xiaohongshu.com
 // @noframes
 // @license      MIT
 // @downloadURL  https://raw.githubusercontent.com/jiojiojackson/red-web/main/red-web.user.js
@@ -19,12 +25,14 @@
 (function () {
   'use strict';
 
-  // Red Web only changes presentation. No external API, credential capture or request interception.
+  // Only official HTML and native site interactions; no credential capture or private API.
   if (window.__RED_WEB_LOADED__) return;
   window.__RED_WEB_LOADED__ = true;
 
   const KEY = 'red-web-disabled';
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
+  const DESKTOP_KEY = 'red-web-desktop-mode';
+  const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15';
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const mobile = /iPhone|iPod|Android|Mobile/i.test(navigator.userAgent)
@@ -33,6 +41,7 @@
   const query = new URLSearchParams(location.search);
   if (query.get('redweb') === 'reset') {
     try { localStorage.removeItem(KEY); } catch (_) {}
+    try { sessionStorage.removeItem(DESKTOP_KEY); } catch (_) {}
     query.delete('redweb');
     history.replaceState(history.state, '', location.pathname +
       (query.size ? '?' + query.toString() : '') + location.hash);
@@ -386,6 +395,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   let currentView = '';
   let lastPath = '';
   let timer;
+  let bodyObserver;
+  let desktopLoading = false;
+  let pendingDesktopLogin = false;
   let toastTimeout;
   let pullStart = null;
   let pullX = 0;
@@ -644,6 +656,79 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
   function loginDialog() {
     return $$('.login-modal,.login-container').find(isVisible);
   }
+  function desktopDocument() {
+    return Boolean($('script[src*="/xhs-pc-web/"]'));
+  }
+  function desktopHtml(response, url) {
+    const final = new URL(response.finalUrl || response.responseURL || url, url);
+    if (final.origin !== new URL(url).origin || final.protocol !== 'https:') {
+      throw Error('电脑版页面跳转到了不同站点，已停止加载');
+    }
+    if (response.status !== 200) throw Error('官网返回状态 ' + response.status);
+    const html = response.responseText;
+    if (typeof html !== 'string' || !new DOMParser().parseFromString(html, 'text/html')
+      .querySelector('script[src*="/xhs-pc-web/"]')) {
+      throw Error('扩展未获取到电脑版页面；请更新 Userscripts 或使用浏览器桌面网站模式');
+    }
+    return html;
+  }
+  function requestDesktopPage(url) {
+    return new Promise((resolve, reject) => {
+      const details = {
+        method: 'GET', url, responseType: 'text', timeout: 15000,
+        headers: { 'User-Agent': DESKTOP_UA, Accept: 'text/html' },
+        onload: resolve,
+        onerror: () => reject(Error('电脑版页面请求失败')),
+        ontimeout: () => reject(Error('电脑版页面请求超时')),
+        onabort: () => reject(Error('电脑版页面请求已取消'))
+      };
+      try {
+        if (typeof GM !== 'undefined' && typeof GM.xmlHttpRequest === 'function') {
+          const task = GM.xmlHttpRequest(details);
+          if (task && typeof task.then === 'function') task.then(resolve, reject);
+        } else if (typeof GM_xmlhttpRequest === 'function') GM_xmlhttpRequest(details);
+        else reject(Error('请重新安装 v0.4.1 并加载脚本，以启用官网页面读取接口'));
+      } catch (error) { reject(error); }
+    });
+  }
+  async function loadDesktopLogin() {
+    if (desktopLoading) return;
+    desktopLoading = true;
+    $$('[data-red-action="login"]').forEach(el => { el.disabled = true; });
+    notify('正在打开官网电脑版登录…');
+    log('AUTH', '读取当前官网电脑版页面');
+    try {
+      const url = homeUrl();
+      const html = desktopHtml(await requestDesktopPage(url), url);
+      // Keep the same origin and URL. Official scripts own all credentials and requests.
+      // Do not move a login form or cookies from the desktop browser to this device.
+      try { sessionStorage.setItem(DESKTOP_KEY, '1'); } catch (_) {}
+      clearInterval(timer);
+      if (bodyObserver) bodyObserver.disconnect();
+      clearTimeout(toastTimeout);
+      clearTimeout(refreshTimeout);
+      refreshInProgress = false;
+      currentView = ''; lastPath = ''; authState = '';
+      nativeLoginMode = false;
+      pendingDesktopLogin = true;
+      window.stop();
+      document.open();
+      document.write(html);
+      document.close();
+      desktopLoading = false;
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start, { once: true });
+      } else start();
+    } catch (error) {
+      desktopLoading = false;
+      pendingDesktopLogin = false;
+      try { sessionStorage.removeItem(DESKTOP_KEY); } catch (_) {}
+      if (!$('#red-web-top')) start();
+      $$('[data-red-action="login"]').forEach(el => { el.disabled = false; });
+      log('ERROR', '电脑版登录: ' + (error && error.message));
+      notify(error && error.message || '电脑版登录暂不可用');
+    }
+  }
   let nativeLoginMode = false;
   function restoreRedWeb() {
     nativeLoginMode = false;
@@ -714,8 +799,8 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     const entry = actionable.find(isVisible) || actionable[0] || candidates.find(isVisible) || candidates[0];
     log('AUTH', '官网登录检测：原生入口数=' + candidates.length);
     if (!entry) {
-      log('AUTH', '手机端官网未提供登录按钮，显示官网桌面模式操作指引');
-      showLoginGuide();
+      log('AUTH', '当前手机页无原生入口，直接加载官网电脑版登录');
+      loadDesktopLogin();
       return;
     }
     try {
@@ -1095,6 +1180,18 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     const loginOpen = Boolean(loginDialog());
     const nextAuth = nativeProfileEntry() ? 'profile' : 'login';
     document.body.dataset.redLoginOpen = String(loginOpen);
+    if (pendingDesktopLogin) {
+      if (loginOpen || nextAuth === 'profile') pendingDesktopLogin = false;
+      else {
+        const candidates = loginElements();
+        const entry = candidates.find(el => el.matches('button')) || candidates[0];
+        if (entry) {
+          pendingDesktopLogin = false;
+          entry.click();
+          log('AUTH', '已打开官网电脑版登录弹窗');
+        }
+      }
+    }
     if (refreshInProgress) {
       const fingerprint = feedFingerprint();
       if (loginOpen) finishRefresh('请先完成官网登录，再刷新推荐');
@@ -1148,6 +1245,9 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
 
   function start() {
     if (!document.body) return;
+    let preferDesktop = false;
+    try { preferDesktop = sessionStorage.getItem(DESKTOP_KEY) === '1'; } catch (_) {}
+    if (preferDesktop && !desktopDocument()) { addCss(); loadDesktopLogin(); return; }
     addCss();
     document.body.classList.add('red-web');
     log('BOOT', 'Red Web v' + VERSION + ' 已启动；路径 ' + safeViewPath());
@@ -1212,7 +1312,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
     document.addEventListener('touchcancel', pullReset, { passive: true });
 
     let pending = false;
-    const observer = new MutationObserver(() => {
+    bodyObserver = new MutationObserver(() => {
       if (pending) return;
       pending = true;
       requestAnimationFrame(() => {
@@ -1221,7 +1321,7 @@ body.red-web[data-red-view="feed"] .red-web-popular-heading { color: #2a2a2a !im
         catch (error) { log('ERROR', 'DOM 更新: ' + (error && error.message)); }
       });
     });
-    observer.observe(document.body, { subtree: true, childList: true });
+    bodyObserver.observe(document.body, { subtree: true, childList: true });
     window.addEventListener('popstate', update);
     timer = setInterval(() => {
       try { update(); }

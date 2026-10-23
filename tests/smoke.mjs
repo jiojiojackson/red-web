@@ -6,7 +6,7 @@ const source = readFileSync(new URL('../red-web.user.js', import.meta.url), 'utf
 
 test('script syntax and version', () => {
   assert.doesNotThrow(() => new Function(source));
-  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.0');
+  assert.equal(source.match(/@version\s+(\S+)/)[1], '0.4.1');
 });
 
 test('login never uses obsolete fixed URL', () => {
@@ -113,10 +113,51 @@ test('H5 home recognizes visual two-column cards without any note links', () => 
   assert.ok(source.includes('const desktopCards = cards.filter'));
 });
 
-test('login when native entry is absent shows guide rather than a fake URL', () => {
+test('login without a native entry loads the official desktop page', () => {
   assert.match(source, /function showLoginGuide\(\)/);
-  assert.match(source, /showLoginGuide\(\);/);
+  const method = source.slice(source.indexOf('  function officialLogin()'), source.indexOf('  function showDialog(kind)'));
+  assert.match(method, /loadDesktopLogin\(\);/);
   assert.doesNotMatch(source, /xiaohongshu\.com\/login\?redirectPath/);
+});
+
+test('desktop loader requests only official HTML with a desktop User-Agent', async () => {
+  let captured;
+  const request = new Function('GM', 'GM_xmlhttpRequest', 'DESKTOP_UA',
+    section('requestDesktopPage(url)', 'loadDesktopLogin()').replace(/\s+async\s*$/, '') +
+    '\nreturn requestDesktopPage;'
+  )({ xmlHttpRequest(details) {
+    captured = details;
+    return Promise.resolve({ status: 200, responseText: 'official html' });
+  } }, undefined, 'Desktop Safari');
+  const response = await request('https://www.rednote.com/');
+  assert.equal(response.status, 200);
+  assert.equal(captured.url, 'https://www.rednote.com/');
+  assert.equal(captured.method, 'GET');
+  assert.equal(captured.headers['User-Agent'], 'Desktop Safari');
+  assert.equal(captured.headers.Cookie, undefined);
+  assert.equal(captured.data, undefined);
+  assert.equal(captured.timeout, 15000);
+});
+
+test('desktop HTML validation rejects redirects to other sites and mobile HTML', () => {
+  let hasDesktopEntry = true;
+  class Parser { parseFromString() { return { querySelector: () => hasDesktopEntry ? {} : null }; } }
+  const validate = new Function('DOMParser', section('desktopHtml(response, url)', 'requestDesktopPage(url)') +
+    '\nreturn desktopHtml;')(Parser);
+  const response = { status: 200, responseText: '<html>official desktop</html>', responseURL: 'https://www.rednote.com/' };
+  assert.equal(validate(response, response.responseURL), response.responseText);
+  assert.throws(() => validate({ ...response, responseURL: 'https://other.example/' }, response.responseURL), /不同站点/);
+  assert.throws(() => validate({ ...response, status: 403 }, response.responseURL), /403/);
+  hasDesktopEntry = false;
+  assert.throws(() => validate(response, response.responseURL), /未获取到电脑版/);
+});
+
+test('missing extension request API fails with an actionable update message', async () => {
+  const request = new Function('GM', 'GM_xmlhttpRequest', 'DESKTOP_UA',
+    section('requestDesktopPage(url)', 'loadDesktopLogin()').replace(/\s+async\s*$/, '') +
+    '\nreturn requestDesktopPage;'
+  )(undefined, undefined, 'Desktop Safari');
+  await assert.rejects(request('https://www.rednote.com/'), /重新安装 v0.4.1/);
 });
 
 test('diagnostics expose no media URLs and preserve H5 native grid', () => {
@@ -126,7 +167,13 @@ test('diagnostics expose no media URLs and preserve H5 native grid', () => {
 });
 
 function section(from, to) {
-  return source.slice(source.indexOf('  function ' + from), source.indexOf('  function ' + to));
+  const position = name => {
+    const plain = source.indexOf('  function ' + name);
+    return plain >= 0 ? plain : source.indexOf('  async function ' + name);
+  };
+  const start = position(from), end = position(to);
+  assert.ok(start >= 0 && end > start, 'missing function section: ' + from + ' / ' + to);
+  return source.slice(start, end);
 }
 
 test('home navigation preserves the current official domain and route', () => {

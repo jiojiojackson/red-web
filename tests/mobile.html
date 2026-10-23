@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Red Web 手机端回归测试</title>
+<style>
+body { margin: 0; font: 14px/1.6 -apple-system, sans-serif; color: #222; }
+.feeds-page > h2, #fixture-controls { margin: 12px; }
+#fixture-controls button { padding: 8px 12px; border: 1px solid #ddd; background: #fff; border-radius: 8px; }
+#fixture-results { white-space: pre-wrap; margin: 10px 0; font-size: 12px; }
+.cover { display: block; } .cover img { display: block; width: 100%; }
+.title { display: block; font-weight: 600; } .author-wrapper { color: #888; }
+.login-modal { position: fixed; inset: 0; background: #0007; display: grid; place-items: center; }
+.login-container { position: relative; width: 400px; padding: 28px; background: white; border-radius: 16px; }
+.login-container button { padding: 12px; } .close { position: absolute; right: 10px; top: 10px; }
+.reload { position: fixed; right: 15px; top: 50%; }
+.h5-feed { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; }
+.h5-card img { width: 100%; } .h5-card { min-width: 0; }
+</style>
+<div id="app">
+  <div class="side-bar"><button class="login-btn">登录</button></div>
+  <div class="channel-container"><div id="homefeed_recommend" class="channel active">推荐</div></div>
+  <main id="mfContainer" class="feeds-page">
+    <h2 id="fixture-status">本地回归测试 · 第 1 批</h2>
+    <div id="fixture-controls"><button id="fixture-run">运行浏览器回归</button><pre id="fixture-results"></pre></div>
+    <div id="exploreFeeds"></div>
+  </main>
+  <div class="reload"><button class="btn-wrapper" aria-label="官网原生刷新（模拟）">↻</button></div>
+</div>
+<script>
+// Synthetic official markup only: no real account, cookies, API calls or page contents.
+const mode = new URLSearchParams(location.search).get('mode');
+history.replaceState(null, '', '/');
+const feed = document.querySelector('#exploreFeeds');
+const status = document.querySelector('#fixture-status');
+let batch = 1, refreshCount = 0;
+function paint() {
+  const colors = ['#dc946d', '#718fa9', '#8fa57c', '#aa8aab'];
+  feed.innerHTML = colors.map((color, index) => {
+    const artwork = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="' +
+      (index % 2 ? 360 : 300) + '"><rect width="100%" height="100%" fill="' + color +
+      '"/><circle cx="150" cy="145" r="70" fill="white" opacity=".3"/></svg>');
+    const info = '<span class="title">推荐示例 ' + batch + ' · ' + (index + 1) + '</span><div class="author-wrapper">测试作者</div>';
+    if (mode === 'hot') return '<article class="h5-card"><img src="' + artwork + '">' + info + '</article>';
+    return '<section class="note-item"><a class="cover" href="https://www.rednote.com/discovery/item/fixture-' +
+      batch + '-' + index + '"><img alt="测试卡片" src="' + artwork + '"></a><div class="footer">' + info + '</div></section>';
+  }).join('');
+}
+function completeLogin() {
+  document.querySelector('.login-modal')?.remove();
+  document.querySelector('.side-bar').innerHTML = '<a href="' + location.origin + '/user/profile/fixture-me">Me</a>';
+}
+function openLogin() {
+  const modal = document.createElement('div');
+  modal.className = 'reds-modal login-modal';
+  modal.innerHTML = '<div class="login-container"><button class="close" aria-label="关闭模拟登录">×</button>' +
+    '<h2>官网弹窗布局测试</h2><p>这是本地模拟页面，无需输入账号。</p><button id="fixture-signin">模拟登录完成</button></div>';
+  document.body.appendChild(modal);
+  modal.querySelector('.close').onclick = () => modal.remove();
+  modal.querySelector('#fixture-signin').onclick = completeLogin;
+}
+document.querySelector('.login-btn').onclick = openLogin;
+document.querySelector('.reload .btn-wrapper').onclick = () => {
+  refreshCount++;
+  // Removing an old card must not be mistaken for receiving a new recommendation.
+  feed.firstElementChild?.remove();
+  setTimeout(() => { batch++; paint(); status.textContent = '本地回归测试 · 第 ' + batch + ' 批'; }, 300);
+};
+if (mode === 'hot') {
+  document.querySelector('.side-bar').remove();
+  document.querySelector('.channel-container').remove();
+  document.querySelector('.reload').remove();
+  status.textContent = '热门笔记';
+  feed.className = 'h5-feed';
+} else if (mode === 'logged-in') completeLogin();
+paint();
+</script>
+<script src="/red-web.user.js"></script>
+<script>
+const results = document.querySelector('#fixture-results');
+const waitFor = async predicate => {
+  for (let i = 0; i < 80; i++) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw Error('等待界面更新超时');
+};
+function check(ok, text) {
+  if (!ok) throw Error(text);
+  results.textContent += '✓ ' + text + '\n';
+}
+function touch(target, type, x, y) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [{ clientX: x, clientY: y }] });
+  target.dispatchEvent(event);
+  return event;
+}
+document.querySelector('#fixture-run').onclick = async () => {
+  results.textContent = '';
+  try {
+    if (mode) throw Error('自动回归请使用不带 mode 参数的测试页');
+    const login = document.querySelector('#red-web-top [data-red-action="login"]');
+    check(login && login.getBoundingClientRect().width >= 44, '顶部登录入口可见且可点击');
+    check(document.querySelector('#red-web-bottom').textContent.includes('登录'), '底部直接显示登录');
+    login.click();
+    await waitFor(() => document.body.dataset.redLoginOpen === 'true');
+    check(getComputedStyle(document.querySelector('#red-web-top')).display === 'none', '官方登录弹窗打开时隐藏脚本导航');
+    const box = document.querySelector('.login-container').getBoundingClientRect();
+    check(box.left >= 0 && box.right <= innerWidth, '登录弹窗适合手机宽度');
+    touch(feed, 'touchstart', 100, 0); touch(feed, 'touchmove', 100, 100); touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 0, '登录弹窗内不触发下拉刷新');
+    document.querySelector('#fixture-signin').click();
+    await waitFor(() => document.querySelector('#red-web-top [data-red-action="profile"]'));
+    check(document.querySelector('#red-web-bottom').textContent.includes('我'), '登录后导航自动更新为我');
+    const refresh = () => document.querySelector('#red-web-top [data-red-action="refresh"]');
+    refresh().click(); refresh().click();
+    await new Promise(resolve => setTimeout(resolve, 80));
+    check(refreshCount === 1 && refresh().disabled, '调用原生刷新并阻止重复请求，删除旧卡片不误报成功');
+    await waitFor(() => batch === 2 && !refresh().disabled);
+    check(document.querySelector('#red-web-toast').textContent === '推荐已更新', '新推荐到达后恢复按钮并提示成功');
+    window.scrollTo(0, 0);
+    touch(feed, 'touchstart', 100, 0); touch(feed, 'touchmove', 210, 20); touch(feed, 'touchend', 210, 20);
+    check(refreshCount === 1, '横向滑动不触发刷新');
+    const nested = document.createElement('div');
+    nested.style.cssText = 'height:100px;overflow-y:auto';
+    nested.innerHTML = '<div style="height:400px">滚动测试</div>';
+    feed.appendChild(nested); nested.scrollTop = 60;
+    touch(nested, 'touchstart', 100, 0); touch(nested, 'touchmove', 100, 100); touch(nested, 'touchend', 100, 100);
+    check(refreshCount === 1, '内层滚动未到顶时不触发刷新');
+    nested.remove();
+    touch(feed, 'touchstart', 100, 0); const move = touch(feed, 'touchmove', 100, 100); touch(feed, 'touchend', 100, 100);
+    check(refreshCount === 2 && move.defaultPrevented, '从屏幕 y=0 下拉也能刷新，并抑制重复的浏览器下拉');
+    await waitFor(() => batch === 3 && !refresh().disabled);
+    check(getComputedStyle(document.querySelector('#red-web-pull')).visibility === 'hidden', '下拉结束后收起刷新提示');
+    results.textContent += '全部浏览器回归通过';
+  } catch (error) { results.textContent += '✗ ' + error.message; }
+};
+</script>
+</html>
